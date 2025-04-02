@@ -1,20 +1,20 @@
 {
-    "id": "message_node",
-    "name": "消息节点",
-    "description": "用于编辑和显示文本消息的节点，可以通过拖动底部调整大小",
-    "type": 4,
-    "color": "0.3,0.5,0.3",
-    "inputs": ["输入"],
-    "outputs": ["输出"],
-    "size": {
-        "x": 250,
-        "y": 180
-    },
-    "properties": {
-        "message": {
-            "type": "string",
-            "default": "在此输入文本消息...",
-            "editor": "textedit"
-        }
-    }
+	"id": "message_node",
+	"name": "消息节点",
+	"description": "用于编辑和显示文本消息的节点，可以通过拖动底部调整大小",
+	"type": 4,
+	"color": "0.3,0.5,0.3",
+	"inputs": ["输入"],
+	"outputs": ["输出"],
+	"size": {
+		"x": 250,
+		"y": 180
+	},
+	"properties": {
+		"message": {
+			"type": "string",
+			"default": "在此输入文本消息...",
+			"editor": "textedit"
+		}
+	}
 }

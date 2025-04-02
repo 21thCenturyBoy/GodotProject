@@ -403,7 +403,43 @@ func create_base_node() -> Control:
 func _on_import_pressed() -> void:
 	print("导入按钮被点击")
 	
-	# 创建新的文件对话框，使用具体的类型
+	# 创建选项菜单
+	var popup = PopupMenu.new()
+	popup.add_item("导入蓝图Json文件", 0)
+	popup.add_item("导入自定义数据", 1)
+	popup.add_item("取消", 2)
+	
+	# 设置弹窗样式
+	popup.set_title("选择导入方式")
+	popup.set_size(Vector2(250, 100))
+	
+	# 直接连接信号
+	popup.connect("id_pressed", Callable(self, "_on_import_option_selected"))
+	
+	# 添加到场景树并显示
+	add_child(popup)
+	
+	# 获取导入按钮的位置并在按钮下方显示菜单
+	var import_button = $ToolBar/ImportButton
+	var global_pos = import_button.get_global_position() + Vector2(0, import_button.size.y)
+	popup.position = global_pos
+	popup.popup()
+	
+	print("导入选项菜单已显示")
+
+# 处理导入选项选择
+func _on_import_option_selected(id: int) -> void:
+	match id:
+		0: # 导入蓝图Json文件
+			_show_import_file_dialog()
+		1: # 导入自定义数据
+			_show_custom_data_input_dialog()
+		2: # 取消
+			pass # 不做任何事情，菜单会自动关闭
+
+# 显示文件导入对话框
+func _show_import_file_dialog() -> void:
+	# 创建新的文件对话框
 	var dialog = FileDialog.new()
 	dialog.file_mode = FileDialog.FILE_MODE_OPEN_FILE
 	dialog.access = FileDialog.ACCESS_FILESYSTEM
@@ -418,6 +454,274 @@ func _on_import_pressed() -> void:
 	dialog.popup_centered(Vector2(800, 600))
 	
 	print("导入文件对话框已显示")
+
+# 显示自定义数据输入对话框
+func _show_custom_data_input_dialog() -> void:
+	# 创建对话框
+	var dialog = ConfirmationDialog.new()
+	dialog.title = "输入自定义JSON数据"
+	dialog.ok_button_text = "导入"
+	dialog.cancel_button_text = "取消"
+	dialog.size = Vector2(600, 500)
+	dialog.exclusive = true
+	
+	# 创建布局
+	var vbox = VBoxContainer.new()
+	vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	vbox.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	vbox.add_theme_constant_override("separation", 10)
+	
+	# 添加说明标签
+	var label = Label.new()
+	label.text = "请输入自定义JSON数据："
+	vbox.add_child(label)
+	
+	# 创建文本编辑区域
+	var text_edit = TextEdit.new()
+	text_edit.name = "JsonTextEdit"
+	text_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	text_edit.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	# 添加示例JSON数据到文本编辑器
+	text_edit.text = """
+{
+	"case_name": "示例数据",
+	"root_node": {
+		"children": [
+			{
+				"children": [
+					{
+						"children": [],
+						"input_text": "Test Input 1",
+						"node_name": "Child 1-1",
+						"node_type": "user_input"
+					}
+				],
+				"input_text": "",
+				"node_name": "Child 1",
+				"node_type": "user_input"
+			},
+			{
+				"children": [
+					{
+						"children": [],
+						"input_text": "Test Input 2",
+						"node_name": "Child 2-1",
+						"node_type": "user_input"
+					}
+				],
+				"input_text": "",
+				"node_name": "Child 2",
+				"node_type": "user_input"
+			}
+		],
+		"input_text": "",
+		"node_name": "Root",
+		"node_type": "user_input"
+	}
+}
+"""
+	text_edit.syntax_highlighter = load("res://addons/node_editor_plugin/nodes/json_syntax.gd").new() if ResourceLoader.exists("res://addons/node_editor_plugin/nodes/json_syntax.gd") else null
+	text_edit.placeholder_text = "在这里粘贴JSON数据..."
+	vbox.add_child(text_edit)
+	
+	# 添加布局到对话框
+	dialog.add_child(vbox)
+	
+	# 添加到场景树
+	add_child(dialog)
+	
+	# 连接确认信号
+	dialog.confirmed.connect(func():
+		var json_text = text_edit.text
+		if json_text.strip_edges().is_empty():
+			_show_message("请输入有效的JSON数据")
+			return
+		
+		# 解析JSON
+		var json = JSON.parse_string(json_text)
+		if json == null:
+			_show_message("JSON解析失败，请检查格式")
+			return
+		
+		# 导入自定义数据
+		_import_custom_data(json)
+	)
+	
+	# 显示对话框
+	dialog.popup_centered()
+
+# 导入自定义数据
+func _import_custom_data(data: Dictionary) -> void:
+	if debug_mode:
+		print("开始导入自定义数据")
+	
+	# 提取蓝图名称
+	if data.has("case_name"):
+		canvas_name = data.get("case_name")
+	else:
+		canvas_name = "自定义蓝图"
+	
+	# 清除现有节点和连接
+	for node in nodes.values():
+		node.queue_free()
+	nodes.clear()
+	node_render_queue.clear()  # 清空渲染队列
+	connections.clear()
+	
+	# 更新连接线绘制器的引用
+	if connection_drawer:
+		connection_drawer.connections = connections
+		connection_drawer.nodes = nodes
+	
+	# 获取节点容器的大小
+	var container_size = node_container.size
+	# 计算中心点偏移
+	var center_offset = Vector2(container_size.x / 2, container_size.y / 2)
+	
+	# 导入根节点及其子节点
+	if data.has("root_node"):
+		var root_data = data.get("root_node")
+		_create_node_hierarchy(root_data, null, center_offset, 0)
+	
+	# 确保所有节点都重绘
+	for node in nodes.values():
+		node.queue_redraw()
+	
+	# 重绘连接线
+	if connection_drawer:
+		connection_drawer.queue_redraw()
+	
+	# 自动排列节点以获得更好的布局
+	_auto_arrange_nodes()
+	
+	if debug_mode:
+		print("自定义数据导入完成，已加载 " + str(nodes.size()) + " 个节点和 " + str(connections.size()) + " 个连接")
+
+# 创建节点层次结构
+func _create_node_hierarchy(node_data: Dictionary, parent_node, center_position: Vector2, level: int) -> Control:
+	if debug_mode:
+		print("创建节点层次结构，层级: ", level)
+	
+	# 创建当前节点
+	var node_type = node_data.get("node_type", "")
+	var node_name = node_data.get("node_name", "节点 " + str(nodes.size()))
+	var input_text = node_data.get("input_text", "")
+	
+	# 生成唯一节点ID
+	var node_id = "Node_" + str(nodes.size())
+	
+	# 创建节点实例
+	var node
+	
+	# 如果是用户输入类型，使用消息节点
+	if node_type == "user_input":
+		# 加载消息节点脚本
+		var MessageNodeScript = load("res://addons/node_editor_plugin/nodes/message_node.gd")
+		node = BaseNodeScene.instantiate()
+		node.set_script(MessageNodeScript)
+	else:
+		# 创建基本节点
+		node = create_base_node()
+	
+	# 设置节点基本属性
+	node.name = node_id
+	node.set("node_id", node_id)
+	node.set("node_name", node_name)
+	
+	# 如果有父节点，创建1个输入槽；否则无输入槽
+	var inputs = []
+	if parent_node != null:
+		inputs.append("输入")
+	node.set("inputs", inputs)
+	
+	# 确保有子节点信息
+	var children = []
+	if node_data.has("children"):
+		children = node_data.get("children")
+	
+	# 设置输出槽 - 修改为只有一个输出槽
+	var outputs = []
+	# 只要有子节点就创建一个输出槽
+	if children.size() > 0:
+		outputs.append("输出")  # 只添加一个输出槽
+	node.set("outputs", outputs)
+	
+	# 设置节点类型
+	var type_value = 0
+	if node_type == "user_input":
+		type_value = 4  # 使用CUSTOM类型
+	node.set("node_type", type_value)
+	
+	# 设置消息节点的属性
+	if node_type == "user_input":
+		# 确保属性正确设置
+		var properties = {
+			"message": {
+				"type": "string",
+				"value": input_text
+			}
+		}
+		
+		# 输出调试信息
+		if debug_mode:
+			print("设置消息节点属性: ", node_id, " 消息内容: ", input_text)
+			
+		node.set("properties", properties)
+		
+		# 强制更新消息节点显示
+		if node.has_method("update_message_display"):
+			node.call("update_message_display")
+	
+	# 设置节点位置
+	var horizontal_offset = 300  # 水平间距
+	var vertical_offset = 100    # 垂直间距
+	var x_pos = center_position.x + level * horizontal_offset
+	var y_pos = center_position.y
+	
+	# 调整位置以避免重叠
+	if level > 0:
+		y_pos += (nodes.size() % 3) * vertical_offset
+	
+	node.position = Vector2(x_pos, y_pos)
+	node.custom_minimum_size = Vector2(200, 150)  # 默认大小
+	
+	# 添加到场景和字典
+	node_container.add_child(node)
+	nodes[node_id] = node
+	node_render_queue.append(node)
+	
+	# 递归创建子节点
+	if children.size() > 0:
+		for i in range(children.size()):
+			var child_data = children[i]
+			
+			# 计算子节点的位置偏移
+			var child_center = Vector2(
+				center_position.x,
+				center_position.y + (i - children.size()/2.0) * vertical_offset
+			)
+			
+			# 递归创建子节点
+			var child_node = _create_node_hierarchy(child_data, node, child_center, level + 1)
+			
+			# 创建从父节点到子节点的连接 - 始终使用父节点的第一个输出槽(索引0)
+			if child_node != null:
+				var connection = {
+					"from_node": node_id,
+					"to_node": child_node.get("node_id"),
+					"from_slot": 0,  # 始终使用第一个输出槽(0)
+					"to_slot": 0     # 子节点的第一个输入槽
+				}
+				connections.append(connection)
+				
+				if debug_mode:
+					print("创建连接: ", node_id, "[0] -> ", 
+						  child_node.get("node_id"), "[0]")
+	
+	if debug_mode:
+		print("节点创建完成: " + node_id + " 位置: " + str(node.position))
+	
+	return node
 
 func _on_import_file_selected(path: String) -> void:
 	if debug_mode:
@@ -449,7 +753,43 @@ func _on_import_file_selected(path: String) -> void:
 func _on_export_pressed() -> void:
 	print("导出按钮被点击")
 	
-	# 创建新的文件对话框，使用具体的类型
+	# 创建选项菜单
+	var popup = PopupMenu.new()
+	popup.add_item("导出蓝图Json文件", 0)
+	popup.add_item("导出自定义数据", 1)
+	popup.add_item("取消", 2)
+	
+	# 设置弹窗样式
+	popup.set_title("选择导出方式")
+	popup.set_size(Vector2(250, 100))
+	
+	# 直接连接信号
+	popup.connect("id_pressed", Callable(self, "_on_export_option_selected"))
+	
+	# 添加到场景树并显示
+	add_child(popup)
+	
+	# 获取导出按钮的位置并在按钮下方显示菜单
+	var export_button = $ToolBar/ExportButton
+	var global_pos = export_button.get_global_position() + Vector2(0, export_button.size.y)
+	popup.position = global_pos
+	popup.popup()
+	
+	print("导出选项菜单已显示")
+
+# 处理导出选项选择
+func _on_export_option_selected(id: int) -> void:
+	match id:
+		0: # 导出蓝图Json文件
+			_show_export_file_dialog()
+		1: # 导出自定义数据
+			_export_custom_data()
+		2: # 取消
+			pass # 不做任何事情，菜单会自动关闭
+
+# 显示文件导出对话框
+func _show_export_file_dialog() -> void:
+	# 创建新的文件对话框
 	var dialog = FileDialog.new()
 	dialog.file_mode = FileDialog.FILE_MODE_SAVE_FILE
 	dialog.access = FileDialog.ACCESS_FILESYSTEM
@@ -465,6 +805,197 @@ func _on_export_pressed() -> void:
 	
 	print("导出文件对话框已显示")
 
+# 导出自定义数据
+func _export_custom_data() -> void:
+	if debug_mode:
+		print("开始导出自定义数据")
+	
+	# 检查图中是否只有消息节点
+	if !_check_only_message_nodes():
+		_show_message("导出失败：当前图中包含非消息节点，只支持导出消息节点。")
+		return
+	
+	# 查找根节点（没有输入槽或无连接的输入槽的节点）
+	var root_nodes = _find_root_nodes()
+	
+	if root_nodes.is_empty():
+		_show_message("导出失败：找不到根节点。")
+		return
+		
+	if root_nodes.size() > 1:
+		_show_message("导出失败：找到多个根节点，自定义数据格式只支持单根节点。")
+		return
+	
+	var root_node = root_nodes[0]
+	
+	# 转换为自定义数据格式
+	var custom_data = {
+		"case_name": canvas_name,
+		"root_node": _node_to_custom_data(root_node)
+	}
+	
+	# 创建对话框显示导出结果
+	_show_export_result_dialog(JSON.stringify(custom_data, "  "))
+
+# 检查是否所有节点都是消息节点
+func _check_only_message_nodes() -> bool:
+	for node in nodes.values():
+		var script_path = node.get_script().resource_path if node.get_script() else ""
+		if not "message_node.gd" in script_path:
+			if debug_mode:
+				print("发现非消息节点: ", node.name, " 脚本路径: ", script_path)
+			return false
+	return true
+
+# 查找根节点（没有输入槽或无连接的输入槽的节点）
+func _find_root_nodes() -> Array:
+	var root_candidates = []
+	
+	if debug_mode:
+		print("开始查找根节点，总节点数: ", nodes.size())
+		for node_id in nodes:
+			var node_name = nodes[node_id].node_name if "node_name" in nodes[node_id] else nodes[node_id].name
+			print("节点: ", node_id, " 名称: ", node_name)
+	
+	# 遍历所有节点
+	for node_id in nodes:
+		var node = nodes[node_id]
+		
+		# 获取节点输入槽数量
+		var inputs_count = 0
+		if "inputs" in node:
+			var inputs = node.inputs
+			if inputs is Array:
+				inputs_count = inputs.size()
+		
+		if debug_mode:
+			print("检查节点: ", node_id, " 输入槽数量: ", inputs_count)
+		
+		# 如果没有输入槽，则为根节点候选
+		if inputs_count == 0:
+			if debug_mode:
+				print("找到没有输入槽的根节点候选: ", node_id)
+			root_candidates.append(node)
+			continue
+		
+		# 检查输入槽是否有连接
+		var has_incoming_connection = false
+		for connection in connections:
+			if connection["to_node"] == node_id:
+				has_incoming_connection = true
+				if debug_mode:
+					print("节点 ", node_id, " 有输入连接")
+				break
+		
+		# 如果有输入槽但没有连接，也是根节点候选
+		if not has_incoming_connection:
+			if debug_mode:
+				print("找到没有输入连接的根节点候选: ", node_id)
+			root_candidates.append(node)
+	
+	if debug_mode:
+		print("找到的根节点候选数量: ", root_candidates.size())
+	
+	return root_candidates
+
+# 将节点转换为自定义数据格式（递归）
+func _node_to_custom_data(node) -> Dictionary:
+	var node_id = node.get_meta("node_id") if node.has_meta("node_id") else node.name
+	
+	if debug_mode:
+		print("处理节点: ", node_id)
+	
+	# 基本节点数据
+	var node_data = {
+		"children": [],
+		"input_text": "",
+		"node_name": "",
+		"node_type": "user_input"  # 因为我们已验证所有节点都是消息节点
+	}
+	
+	# 获取节点名称
+	if node.has_meta("node_name"):
+		node_data["node_name"] = node.get_meta("node_name")
+	else:
+		# 尝试从脚本获取
+		node_data["node_name"] = node.node_name if "node_name" in node else node.name
+	
+	# 获取消息文本
+	if "properties" in node:
+		var properties = node.properties
+		if properties is Dictionary and properties.has("message") and properties["message"].has("value"):
+			node_data["input_text"] = properties["message"]["value"]
+			
+			if debug_mode:
+				print("获取到消息文本: ", node_data["input_text"])
+	
+	# 查找所有以该节点为起点的连接
+	var children_connections = []
+	for connection in connections:
+		if connection["from_node"] == node_id:
+			children_connections.append(connection)
+	
+	# 处理所有子节点
+	for connection in children_connections:
+		var child_id = connection["to_node"]
+		if nodes.has(child_id):
+			var child_node = nodes[child_id]
+			# 递归处理子节点
+			var child_data = _node_to_custom_data(child_node)
+			node_data["children"].append(child_data)
+	
+	return node_data
+
+# 显示导出结果对话框
+func _show_export_result_dialog(json_text: String) -> void:
+	# 创建对话框
+	var dialog = AcceptDialog.new()
+	dialog.title = "自定义数据导出结果"
+	dialog.ok_button_text = "关闭"
+	dialog.size = Vector2(600, 500)
+	dialog.exclusive = true
+	
+	# 创建布局
+	var vbox = VBoxContainer.new()
+	vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	vbox.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	vbox.add_theme_constant_override("separation", 10)
+	
+	# 添加说明标签
+	var label = Label.new()
+	label.text = "已成功导出为自定义数据格式（可复制以下文本）："
+	vbox.add_child(label)
+	
+	# 创建文本编辑区域
+	var text_edit = TextEdit.new()
+	text_edit.name = "JsonTextEdit"
+	text_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	text_edit.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	text_edit.text = json_text
+	text_edit.syntax_highlighter = load("res://addons/node_editor_plugin/nodes/json_syntax.gd").new() if ResourceLoader.exists("res://addons/node_editor_plugin/nodes/json_syntax.gd") else null
+	text_edit.editable = false  # 只读模式
+	vbox.add_child(text_edit)
+	
+	# 添加复制按钮
+	var copy_button = Button.new()
+	copy_button.text = "复制到剪贴板"
+	copy_button.pressed.connect(func():
+		DisplayServer.clipboard_set(json_text)
+		_show_message("已复制到剪贴板")
+	)
+	vbox.add_child(copy_button)
+	
+	# 添加布局到对话框
+	dialog.add_child(vbox)
+	
+	# 添加到场景树并显示
+	add_child(dialog)
+	dialog.popup_centered()
+	
+	if debug_mode:
+		print("导出结果对话框已显示")
+
+# 处理文件导出路径选择
 func _on_export_file_selected(path):
 	print("导出路径已选择: " + path)
 	

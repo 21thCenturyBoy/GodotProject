@@ -16,19 +16,19 @@
   "inputs": ["输入槽1", "输入槽2", ...],
   "outputs": ["输出槽1", "输出槽2", ...],
   "size": {
-    "x": 宽度,
-    "y": 高度
+	"x": 宽度,
+	"y": 高度
   },
   "properties": {
-    "属性名1": {
-      "type": "类型",
-      "default": "默认值"
-    },
-    "属性名2": {
-      "type": "类型",
-      "default": "默认值"
-    },
-    ...
+	"属性名1": {
+	  "type": "类型",
+	  "default": "默认值"
+	},
+	"属性名2": {
+	  "type": "类型",
+	  "default": "默认值"
+	},
+	...
   }
 }
 ```
@@ -63,14 +63,14 @@
   "inputs": [],
   "outputs": ["输出1", "输出2"],
   "size": {
-    "x": 180,
-    "y": 120
+	"x": 180,
+	"y": 120
   },
   "properties": {
-    "input_value": {
-      "type": "string",
-      "default": ""
-    }
+	"input_value": {
+	  "type": "string",
+	  "default": ""
+	}
   }
 }
 ```
@@ -86,14 +86,14 @@
   "inputs": ["输入1", "输入2"],
   "outputs": ["输出1", "输出2"],
   "size": {
-    "x": 200,
-    "y": 150
+	"x": 200,
+	"y": 150
   },
   "properties": {
-    "operation": {
-      "type": "string",
-      "default": "处理"
-    }
+	"operation": {
+	  "type": "string",
+	  "default": "处理"
+	}
   }
 }
 ```

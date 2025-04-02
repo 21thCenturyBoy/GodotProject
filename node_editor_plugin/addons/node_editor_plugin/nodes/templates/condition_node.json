@@ -1,19 +1,19 @@
 {
-    "id": "condition_node",
-    "name": "条件节点",
-    "description": "用于条件判断的节点",
-    "type": 3,
-    "color": "0.5,0.3,0.3",
-    "inputs": ["条件输入"],
-    "outputs": ["True输出", "False输出"],
-    "size": {
-        "x": 180,
-        "y": 120
-    },
-    "properties": {
-        "condition": {
-            "type": "string",
-            "default": "x > 0"
-        }
-    }
+	"id": "condition_node",
+	"name": "条件节点",
+	"description": "用于条件判断的节点",
+	"type": 3,
+	"color": "0.5,0.3,0.3",
+	"inputs": ["条件输入"],
+	"outputs": ["True输出", "False输出"],
+	"size": {
+		"x": 180,
+		"y": 120
+	},
+	"properties": {
+		"condition": {
+			"type": "string",
+			"default": "x > 0"
+		}
+	}
 }

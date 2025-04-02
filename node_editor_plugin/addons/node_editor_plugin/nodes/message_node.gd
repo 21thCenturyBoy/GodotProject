@@ -123,4 +123,32 @@ func get_node_data() -> Dictionary:
 	if text_edit and properties.has("message"):
 		properties["message"]["value"] = text_edit.text
 	
-	return data 
+	return data
+
+# 更新消息显示内容
+func update_message_display():
+	if debug_mode:
+		print("更新消息显示内容，属性为: ", properties)
+		
+	# 确保编辑器已初始化
+	if not editor_initialized:
+		_initialize_text_editor()
+		return
+		
+	# 确保编辑器控件存在
+	if not text_edit:
+		return
+		
+	# 从属性中获取消息文本
+	var message_text = ""
+	if properties.has("message") and properties["message"].has("value"):
+		message_text = properties["message"]["value"]
+		
+		if debug_mode:
+			print("读取到消息文本: ", message_text)
+	
+	# 更新编辑器文本
+	if text_edit.text != message_text:
+		text_edit.text = message_text
+		if debug_mode:
+			print("已将文本设置为: ", message_text) 
