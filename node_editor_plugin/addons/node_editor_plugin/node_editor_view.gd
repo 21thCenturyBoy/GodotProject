@@ -26,6 +26,12 @@ var connection_start_slot_idx: int = -1  # 起始槽索引
 var connection_start_is_output: bool = true  # 起始槽是否为输出槽
 var connection_end_pos: Vector2 = Vector2.ZERO  # 连接线终点位置
 
+# 画布拖拽相关变量
+var canvas_offset = Vector2.ZERO  # 画布偏移量
+var dragging_canvas = false  # 是否正在拖拽画布
+var canvas_drag_start_pos = Vector2.ZERO  # 拖拽开始位置
+var canvas_name = "未命名"  # 画布名称
+
 # 预加载节点场景和脚本
 const BaseNodeScene = preload("res://addons/node_editor_plugin/nodes/base_node.tscn")
 const BaseNodeScript = preload("res://addons/node_editor_plugin/nodes/base_node.gd")
@@ -312,11 +318,11 @@ func _create_node_from_template(template_id: String) -> void:
 		node_size.x = float(size_data.get("x", 200))
 		node_size.y = float(size_data.get("y", 150))
 	
-	# 计算中心位置，考虑节点大小的偏移
+	# 计算中心位置，考虑节点大小的偏移和画布偏移
 	var center_pos = Vector2(
 		(container_size.x - node_size.x) / 2,
 		(container_size.y - node_size.y) / 2
-	)
+	) - canvas_offset  # 减去画布偏移，使节点出现在视图中心
 	node.position = center_pos
 	node.custom_minimum_size = node_size
 	
@@ -405,8 +411,13 @@ func _on_import_pressed() -> void:
 	
 	print("导入文件对话框已显示")
 
-func _on_import_file_selected(path):
-	print("文件已选择: " + path)
+func _on_import_file_selected(path: String) -> void:
+	if debug_mode:
+		print("导入文件: " + path)
+	
+	# 设置画布名称为文件名（不含扩展名）
+	var file_name = path.get_file().get_basename()
+	canvas_name = file_name
 	
 	# 尝试读取文件
 	var file = FileAccess.open(path, FileAccess.READ)
@@ -603,6 +614,11 @@ func _gui_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton:
 		if event.button_index == MOUSE_BUTTON_LEFT:
 			if event.pressed:
+				# 检查是否在拖动画布
+				if not dragging_node and not creating_connection:
+					dragging_canvas = true
+					canvas_drag_start_pos = get_global_mouse_position()
+				
 				# 点击空白区域则取消选中节点
 				print("点击空白区域")
 				select_node(null)
@@ -625,6 +641,10 @@ func _gui_input(event: InputEvent) -> void:
 					preview_control.visible = false
 					drag_preview_rect = Rect2()
 					select_node(null)
+			
+			# 结束画布拖拽
+			if dragging_canvas and !event.pressed:
+				dragging_canvas = false
 		
 		# 右键检测连接线并显示删除菜单
 		elif event.button_index == MOUSE_BUTTON_RIGHT and event.pressed:
@@ -635,7 +655,13 @@ func _gui_input(event: InputEvent) -> void:
 				_show_connection_context_menu(connection_idx, get_global_mouse_position())
 	
 	elif event is InputEventMouseMotion:
-		if dragging_node and selected_node:
+		# 处理画布拖拽
+		if dragging_canvas:
+			var delta = get_global_mouse_position() - canvas_drag_start_pos
+			canvas_drag_start_pos = get_global_mouse_position()
+			_move_canvas(delta)
+			
+		elif dragging_node and selected_node:
 			# 确认拖拽已开始 - 只有当鼠标移动超过5像素时才开始拖拽
 			if not drag_started:
 				var current_pos = get_global_mouse_position()
@@ -644,7 +670,7 @@ func _gui_input(event: InputEvent) -> void:
 					_start_drag(selected_node)  # 这里会设置预览矩形为可见
 					if debug_mode:
 						print("鼠标移动距离: ", distance, " 像素，开始拖拽")
-				
+			
 			# 只在真正拖拽时更新预览位置
 			if drag_started:
 				_update_preview_position(get_global_mouse_position())
@@ -730,8 +756,24 @@ func _get_node_at_position(global_pos: Vector2) -> Control:
 
 # 重写绘制函数，处理选中状态和拖拽预览
 func _draw() -> void:
-	# 空实现，预览矩形由PreviewRect控件绘制
-	pass
+	# 绘制画布信息在左上角
+	var info_text = canvas_name + " | 偏移: (" + str(int(canvas_offset.x)) + ", " + str(int(canvas_offset.y)) + ")"
+	var font = ThemeDB.fallback_font
+	var font_size = 14
+	var text_color = Color(1, 1, 1, 0.8)
+	var bg_color = Color(0.2, 0.2, 0.2, 0.7)
+	
+	# 计算文本大小
+	var text_size = font.get_string_size(info_text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size)
+	
+	# 绘制背景矩形
+	var padding = 5
+	var bg_rect = Rect2(10, 10, text_size.x + padding * 2, text_size.y + padding * 2)
+	draw_rect(bg_rect, bg_color, true)
+	draw_rect(bg_rect, Color(0.4, 0.4, 0.4, 0.8), false, 1)
+	
+	# 绘制文本
+	draw_string(font, Vector2(10 + padding, 10 + padding + text_size.y * 0.8), info_text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, text_color)
 
 # 修改_create_test_node函数，添加到渲染队列
 func _create_test_node():
@@ -790,6 +832,7 @@ class ConnectionDrawer extends Control:
 	var nodes: Dictionary
 	var debug_mode: bool = true
 	var editor_view = null  # 引用到编辑器视图
+	var _real_time_update: bool = false  # 是否进行实时更新
 	
 	func _init(view = null):
 		editor_view = view
@@ -815,9 +858,34 @@ class ConnectionDrawer extends Control:
 						if from_node.outputs.size() <= from_slot_idx or to_node.inputs.size() <= to_slot_idx:
 							continue
 						
-						# 计算连接线的起点和终点（考虑节点的全局位置）
-						var from_pos = from_node.position + Vector2(from_node.size.x, 40 + from_slot_idx * 25 + 25/2)
-						var to_pos = to_node.position + Vector2(0, 40 + to_slot_idx * 25 + 25/2)
+						# 获取槽位置
+						var from_pos
+						var to_pos
+						
+						if editor_view:
+							# 使用编辑器视图获取槽位置
+							from_pos = editor_view._get_slot_position(from_node, true, from_slot_idx)
+							to_pos = editor_view._get_slot_position(to_node, false, to_slot_idx)
+							
+							# 如果正在拖拽某个节点，调整连接线位置
+							if _real_time_update and editor_view.dragging_node and editor_view.drag_started:
+								# 如果起始节点是被拖拽的节点，调整起始位置
+								if from_node == editor_view.selected_node:
+									# 使用预览矩形的位置来计算新的起始位置
+									var offset = editor_view.drag_preview_rect.position - from_node.position
+									from_pos += offset
+								
+								# 如果终点节点是被拖拽的节点，调整终点位置
+								if to_node == editor_view.selected_node:
+									# 使用预览矩形的位置来计算新的终点位置
+									var offset = editor_view.drag_preview_rect.position - to_node.position
+									to_pos += offset
+						else:
+							# 直接计算槽位置（不应该走这个分支，仅作为后备）
+							var slot_height = 25
+							var y_offset = 40
+							from_pos = from_node.position + Vector2(from_node.size.x, y_offset + from_slot_idx * slot_height + slot_height/2)
+							to_pos = to_node.position + Vector2(0, y_offset + to_slot_idx * slot_height + slot_height/2)
 						
 						# 绘制连接线
 						_draw_bezier_connection(from_pos, to_pos, Color(0.2, 0.6, 1.0))
@@ -951,56 +1019,54 @@ func _on_node_gui_input(event: InputEvent, source_node: Control) -> void:
 # 开始拖拽，创建预览矩形
 func _start_drag(node: Control) -> void:
 	if debug_mode:
-		print("开始真正的拖拽: " + node.name)
-		
+		print("开始拖动节点: " + node.name)
+	
+	# 标记拖拽已开始
 	drag_started = true
 	
-	# 设置预览控件大小和引用
-	var preview_size = node.size
-	preview_control.size = preview_size
-	preview_control.node_ref = node
+	# 设置拖拽参数
+	drag_offset = get_global_mouse_position() - node.get_global_position()
+	drag_preview_rect = Rect2(node.position, node.size)
 	
-	# 获取全局鼠标位置并更新预览位置
-	var mouse_global_pos = get_global_mouse_position()
-	_update_preview_position(mouse_global_pos)
-	
-	# 确保预览控件可见
+	# 使预览矩形可见
 	preview_control.visible = true
+	preview_control.size = node.size
+	preview_control.position = node.position
+	preview_control.node_ref = node  # 添加对正在拖拽节点的引用
+	preview_control.queue_redraw()  # 确保绘制预览矩形
+	
+	# 通知连接线绘制器需要实时更新连接线
+	if connection_drawer:
+		connection_drawer._real_time_update = true
+		connection_drawer.queue_redraw()
 	
 	if debug_mode:
-		print("开始拖动节点预览: " + node.name)
-		print("节点位置: " + str(node.position))
+		print("拖拽矩形已创建 - 位置:", drag_preview_rect.position, " 大小:", drag_preview_rect.size)
 
 # 更新预览矩形位置
 func _update_preview_position(global_mouse_pos: Vector2) -> void:
-	if not drag_started or not selected_node:
-		return
+	if selected_node and drag_started:
+		# 计算新位置，考虑鼠标位置和节点偏移
+		var local_mouse_pos = global_mouse_pos - node_container.get_global_position()
+		# 减去拖动偏移来获得节点的新位置
+		var new_pos = local_mouse_pos - drag_offset
 		
-	# 计算鼠标在节点容器中的位置
-	var container_global_pos = node_container.get_global_position()
-	var mouse_in_container = global_mouse_pos - container_global_pos
-	
-	# 计算预览矩形的位置，使其中心点在鼠标位置
-	var rect_size = selected_node.size
-	var new_pos = mouse_in_container - rect_size / 2
-	
-	# 限制在容器范围内
-	var container_rect = node_container.get_rect()
-	new_pos.x = clamp(new_pos.x, 0, container_rect.size.x - rect_size.x)
-	new_pos.y = clamp(new_pos.y, 0, container_rect.size.y - rect_size.y)
-	
-	# 保存预览矩形位置用于后续处理
-	drag_preview_rect = Rect2(new_pos, rect_size)
-	
-	# 更新预览控件位置和大小
-	preview_control.size = rect_size  # 确保大小也被更新
-	preview_control.position = get_global_transform().inverse() * (container_global_pos + new_pos)
-	preview_control.queue_redraw()  # 强制重绘预览矩形
-	
-	if debug_mode:
-		print("拖拽预览矩形位置: " + str(new_pos))
+		# 更新预览矩形属性
+		drag_preview_rect = Rect2(new_pos, selected_node.size)
+		
+		# 更新预览控件位置
+		preview_control.position = new_pos
+		preview_control.size = selected_node.size
+		preview_control.queue_redraw()
+		
+		# 通知连接线绘制器需要重绘，虽然节点实际尚未移动
+		if connection_drawer:
+			connection_drawer.queue_redraw()
+	else:
+		if debug_mode:
+			print("无法更新预览位置 - 拖拽未开始或无选中节点")
 
-# 结束拖拽，移动节点到最终位置
+# 结束拖拽
 func _end_drag(node: Control) -> void:
 	if debug_mode:
 		print("结束拖动节点: " + node.name)
@@ -1020,11 +1086,14 @@ func _end_drag(node: Control) -> void:
 	# 结束状态重新选择（保险）
 	select_node(node)
 	
-	# 更新连接线
+	# 确保连接线绘制器知道节点已经移动
 	if connection_drawer:
+		# 强制更新连接线绘制器的节点引用
+		connection_drawer.nodes = nodes
+		# 关闭实时更新模式
+		connection_drawer._real_time_update = false
 		connection_drawer.queue_redraw()
 	
-
 	# 重绘整个视图
 	queue_redraw()
 
@@ -1170,7 +1239,7 @@ func _on_node_slot_pressed(node: Control, is_output: bool, slot_idx: int) -> voi
 	var start_pos = _get_slot_position(node, is_output, slot_idx)
 	
 	# 初始化终点为当前鼠标位置
-	connection_end_pos = get_global_mouse_position() - node_container.get_global_position()
+	connection_end_pos = get_global_mouse_position() - node_container.get_global_position() - canvas_offset
 	
 	if debug_mode:
 		print("开始创建连接线 - 起点:", start_pos, "初始终点:", connection_end_pos)
@@ -1182,6 +1251,61 @@ func _on_node_slot_pressed(node: Control, is_output: bool, slot_idx: int) -> voi
 	# 更新视图状态
 	Input.set_mouse_mode(Input.MOUSE_MODE_HIDDEN)  # 可选：隐藏鼠标指针
 	get_viewport().set_input_as_handled()  # 标记事件已处理
+
+# 处理全局的鼠标移动以更新连接线预览
+func _input(event: InputEvent) -> void:
+	# 使用_input而不是_unhandled_input以确保能捕获所有事件
+	if creating_connection:
+		if event is InputEventMouseMotion:
+			# 更新连接终点位置 - 转换为相对于NodeContainer的位置
+			connection_end_pos = get_global_mouse_position() - node_container.get_global_position()
+			
+			if debug_mode and Engine.get_frames_drawn() % 60 == 0:
+				print("全局更新连接线终点:", connection_end_pos)
+			
+			# 确保连接线绘制器重绘
+			if connection_drawer:
+				connection_drawer.queue_redraw()
+			
+			# 接受事件，防止进一步处理
+			get_viewport().set_input_as_handled()
+		
+		# 处理在空白区域点击取消连接创建或完成连接
+		elif event is InputEventMouseButton:
+			if event.button_index == MOUSE_BUTTON_LEFT and !event.pressed:
+				# 尝试连接到最近的槽点
+				if _try_connect_to_nearest_slot():
+					# 成功创建连接，结束创建状态
+					_end_connection_creation()
+				else:
+					# 没有找到附近槽点，取消连接
+					if debug_mode:
+						print("未找到附近槽点，取消连接")
+					_cancel_connection_creation()
+				
+				get_viewport().set_input_as_handled()
+			elif event.button_index == MOUSE_BUTTON_RIGHT and event.pressed:
+				_cancel_connection_creation()
+				get_viewport().set_input_as_handled()
+
+# 移动画布（所有节点）
+func _move_canvas(delta: Vector2) -> void:
+	canvas_offset += delta
+	
+	# 更新所有节点的位置
+	for node in nodes.values():
+		node.position += delta
+	
+	# 如果正在创建连接线，也要更新连接线的终点位置
+	if creating_connection:
+		connection_end_pos += delta
+	
+	# 重绘连接线
+	if connection_drawer:
+		connection_drawer.queue_redraw()
+	
+	# 触发重绘整个视图
+	queue_redraw()
 
 # 处理节点槽释放事件
 func _on_node_slot_released(node: Control, is_output: bool, slot_idx: int) -> void:
@@ -1232,8 +1356,7 @@ func _try_connect_to_nearest_slot() -> bool:
 		if debug_mode:
 			print("释放鼠标时找到附近槽点: ", target_slot.node.name, 
 				  " ", "输出槽" if target_slot.is_output else "输入槽", 
-				  " 索引:", target_slot.index,
-				  " 距离:", target_slot.distance)
+				  " 索引:", target_slot.index)
 		
 		# 确保连接类型正确(从输出到输入)
 		var from_node = connection_start_node if connection_start_is_output else target_slot.node
@@ -1303,19 +1426,6 @@ func _end_connection_creation() -> void:
 	if debug_mode:
 		print("结束连接线创建")
 
-# 获取节点槽的全局位置
-func _get_slot_position(node: Control, is_output: bool, slot_idx: int) -> Vector2:
-	var slot_height = 25
-	var y_offset = 40
-	var slot_y = y_offset + slot_idx * slot_height + slot_height/2
-	
-	if is_output:
-		# 输出槽在节点右侧
-		return node.position + Vector2(node.size.x, slot_y)
-	else:
-		# 输入槽在节点左侧
-		return node.position + Vector2(0, slot_y)
-
 # 显示消息对话框
 func _show_message(text: String) -> void:
 	var dialog = AcceptDialog.new()
@@ -1324,71 +1434,6 @@ func _show_message(text: String) -> void:
 	dialog.ok_button_text = "确定"
 	add_child(dialog)
 	dialog.popup_centered()
-
-# 根据鼠标位置判断点击的是哪条连接线
-func _get_connection_at_position(position: Vector2) -> int:
-	if connections.size() == 0:
-		return -1
-	
-	# 获取鼠标临近点（允许一定距离误差）
-	var tolerance = 10.0
-	
-	for i in range(connections.size()):
-		var connection = connections[i]
-		if connection is Dictionary:
-			var from_node_id = connection.get("from_node", "")
-			var to_node_id = connection.get("to_node", "")
-			
-			if not nodes.has(from_node_id) or not nodes.has(to_node_id):
-				continue
-				
-			var from_node = nodes[from_node_id]
-			var to_node = nodes[to_node_id]
-			
-			if from_node and to_node:
-				var from_slot_idx = connection.get("from_slot", 0)
-				var to_slot_idx = connection.get("to_slot", 0)
-				
-				if from_node.outputs.size() <= from_slot_idx or to_node.inputs.size() <= to_slot_idx:
-					continue
-				
-				# 计算连接线的起点和终点
-				var from_pos = from_node.position + Vector2(from_node.size.x, 40 + from_slot_idx * 25 + 25/2)
-				var to_pos = to_node.position + Vector2(0, 40 + to_slot_idx * 25 + 25/2)
-				
-				# 计算曲线上的点并检查距离
-				var distance = from_pos.distance_to(to_pos)
-				var control_point_offset = min(distance * 0.5, 200.0)
-				var from_control = from_pos + Vector2(control_point_offset, 0)
-				var to_control = to_pos - Vector2(control_point_offset, 0)
-				
-				var steps = 20
-				for j in range(steps):
-					var t1 = float(j) / steps
-					var t2 = float(j + 1) / steps
-					var point1 = cubic_bezier(from_pos, from_control, to_control, to_pos, t1)
-					var point2 = cubic_bezier(from_pos, from_control, to_control, to_pos, t2)
-					
-					var line_vec = point2 - point1
-					var line_len = line_vec.length()
-					
-					if line_len == 0:
-						continue
-						
-					var normal = line_vec.normalized()
-					var to_point_vec = position - point1
-					var project_len = to_point_vec.dot(normal)
-					
-					if project_len < 0 or project_len > line_len:
-						continue
-						
-					var closest_point = point1 + normal * project_len
-					var distance_to_line = (position - closest_point).length()
-					
-					if distance_to_line <= tolerance:
-						return i
-	
-	return -1
 
 # 显示连接线的右键菜单
 func _show_connection_context_menu(connection_idx: int, global_pos: Vector2) -> void:
@@ -1422,72 +1467,6 @@ func _delete_connection(connection_idx: int) -> void:
 		if debug_mode:
 			print("连接已删除")
 
-# 根据位置查找附近的输入/输出槽
-func _find_slot_near_position(position: Vector2, input_slots_only: bool = false, output_slots_only: bool = false) -> Dictionary:
-	# 允许的最大距离 - 增加识别范围，提高用户体验
-	var max_distance = 30.0
-	var closest_slot = {}
-	var closest_distance = max_distance
-	
-	# 遍历所有节点
-	for node in nodes.values():
-		if not is_instance_valid(node):
-			continue
-			
-		var slot_height = 25
-		var y_offset = 40
-		
-		# 检查输入槽
-		if not output_slots_only:
-			for i in range(node.inputs.size()):
-				var slot_y = y_offset + i * slot_height + slot_height/2
-				var slot_pos = node.position + Vector2(0, slot_y)
-				
-				# 计算距离
-				var distance = position.distance_to(slot_pos)
-				if distance < closest_distance:
-					closest_distance = distance
-					closest_slot = {
-						"node": node,
-						"is_output": false,
-						"index": i,
-						"distance": distance
-					}
-		
-		# 检查输出槽
-		if not input_slots_only:
-			for i in range(node.outputs.size()):
-				var slot_y = y_offset + i * slot_height + slot_height/2
-				var slot_pos = node.position + Vector2(node.size.x, slot_y)
-				
-				# 计算距离
-				var distance = position.distance_to(slot_pos)
-				if distance < closest_distance:
-					closest_distance = distance
-					closest_slot = {
-						"node": node,
-						"is_output": true,
-						"index": i,
-						"distance": distance
-					}
-	
-	# 如果是创建连接的上下文，增加一些额外的验证
-	if creating_connection and not closest_slot.is_empty():
-		# 检查是否可以与起始节点连接
-		var is_valid = false
-		
-		# 确保是一个输入连接到一个输出
-		if connection_start_is_output != closest_slot.is_output:
-			# 确保不是同一个节点
-			if connection_start_node != closest_slot.node:
-				is_valid = true
-		
-		# 如果不是有效连接，返回空结果
-		if not is_valid:
-			return {}
-	
-	return closest_slot
-
 # 当正在创建连接时，获取当前鼠标附近的有效槽点
 func _get_highlighted_slot() -> Dictionary:
 	if !creating_connection:
@@ -1500,38 +1479,139 @@ func _get_highlighted_slot() -> Dictionary:
 	else:
 		return _find_slot_near_position(connection_end_pos, false, true)
 
-# 处理全局的鼠标移动以更新连接线预览
-func _input(event: InputEvent) -> void:
-	# 使用_input而不是_unhandled_input以确保能捕获所有事件
-	if creating_connection:
-		if event is InputEventMouseMotion:
-			# 更新连接终点位置
-			connection_end_pos = get_global_mouse_position() - node_container.get_global_position()
-			
-			if debug_mode and Engine.get_frames_drawn() % 60 == 0:
-				print("全局更新连接线终点:", connection_end_pos)
-			
-			# 确保连接线绘制器重绘
-			if connection_drawer:
-				connection_drawer.queue_redraw()
-			
-			# 接受事件，防止进一步处理
-			get_viewport().set_input_as_handled()
-		
-		# 处理在空白区域点击取消连接创建或完成连接
-		elif event is InputEventMouseButton:
-			if event.button_index == MOUSE_BUTTON_LEFT and !event.pressed:
-				# 尝试连接到最近的槽点
-				if _try_connect_to_nearest_slot():
-					# 成功创建连接，结束创建状态
-					_end_connection_creation()
-				else:
-					# 没有找到附近槽点，取消连接
-					if debug_mode:
-						print("未找到附近槽点，取消连接")
-					_cancel_connection_creation()
+# 获取节点槽的全局位置
+func _get_slot_position(node: Control, is_output: bool, slot_idx: int) -> Vector2:
+	var slot_height = 25
+	var y_offset = 40
+	var slot_y = y_offset + slot_idx * slot_height + slot_height/2
+	
+	# 注意：我们不在这里加上画布偏移量，因为节点的位置已经包含了这个偏移
+	if is_output:
+		# 输出槽在节点右侧
+		return node.position + Vector2(node.size.x, slot_y)
+	else:
+		# 输入槽在节点左侧
+		return node.position + Vector2(0, slot_y)
+
+# 在指定位置查找最近的节点槽
+func _find_slot_near_position(pos: Vector2, find_inputs: bool, find_outputs: bool) -> Dictionary:
+	# 设置最大识别距离
+	var max_distance = 30.0
+	# 调整位置（pos已经是相对于NodeContainer的位置，不需要减去画布偏移）
+	var adjusted_pos = pos
+	
+	if debug_mode:
+		print("查找位置附近的槽点：", adjusted_pos, "查找输入：", find_inputs, "查找输出：", find_outputs)
+	
+	var closest_slot = {}
+	var closest_distance = max_distance
+	
+	# 遍历所有节点
+	for node in nodes.values():
+		# 检查输入槽
+		if find_inputs:
+			for i in range(node.inputs.size()):
+				var slot_pos = _get_slot_position(node, false, i)
+				var distance = slot_pos.distance_to(adjusted_pos)
 				
-				get_viewport().set_input_as_handled()
-			elif event.button_index == MOUSE_BUTTON_RIGHT and event.pressed:
-				_cancel_connection_creation()
-				get_viewport().set_input_as_handled()
+				if distance < closest_distance:
+					closest_distance = distance
+					closest_slot = {
+						"node": node,
+						"is_output": false,
+						"index": i,
+						"distance": distance
+					}
+		
+		# 检查输出槽
+		if find_outputs:
+			for i in range(node.outputs.size()):
+				var slot_pos = _get_slot_position(node, true, i)
+				var distance = slot_pos.distance_to(adjusted_pos)
+				
+				if distance < closest_distance:
+					closest_distance = distance
+					closest_slot = {
+						"node": node,
+						"is_output": true,
+						"index": i,
+						"distance": distance
+					}
+	
+	if debug_mode and !closest_slot.is_empty():
+		print("找到最近的槽点：", closest_slot.node.name, 
+			  " ", "输出槽" if closest_slot.is_output else "输入槽", 
+			  " 索引:", closest_slot.index, " 距离:", closest_slot.distance)
+	
+	return closest_slot
+
+# 获取指定位置的连接线索引
+func _get_connection_at_position(pos: Vector2) -> int:
+	var tolerance = 10.0  # 点击容差范围
+	
+	# 这里pos已经是相对于NodeContainer的位置
+	var adjusted_pos = pos
+	
+	if debug_mode:
+		print("检查位置是否有连接线：", adjusted_pos)
+	
+	# 遍历所有连接
+	for i in range(connections.size()):
+		var connection = connections[i]
+		
+		# 获取连接的节点
+		var from_node_id = connection.get("from_node", "")
+		var to_node_id = connection.get("to_node", "")
+		
+		if not nodes.has(from_node_id) or not nodes.has(to_node_id):
+			continue
+		
+		var from_node = nodes[from_node_id]
+		var to_node = nodes[to_node_id]
+		
+		if from_node and to_node:
+			var from_slot_idx = connection.get("from_slot", 0)
+			var to_slot_idx = connection.get("to_slot", 0)
+			
+			# 获取连接线端点
+			var from_pos = _get_slot_position(from_node, true, from_slot_idx)
+			var to_pos = _get_slot_position(to_node, false, to_slot_idx)
+			
+			# 检查鼠标点击位置是否在连接线上
+			if _is_point_on_connection(adjusted_pos, from_pos, to_pos, tolerance):
+				if debug_mode:
+					print("找到连接线：", i)
+				return i
+	
+	return -1
+
+# 辅助函数：判断点是否在连接线上
+func _is_point_on_connection(point: Vector2, from: Vector2, to: Vector2, tolerance: float) -> bool:
+	# 简单实现：判断点到线段的距离是否小于容差值
+	# 计算线段向量
+	var segment = to - from
+	var length = segment.length()
+	
+	if length < 0.0001:  # 防止线段长度为0导致的除零错误
+		return point.distance_to(from) < tolerance
+	
+	# 线段向量的单位向量
+	var direction = segment / length
+	
+	# 计算点到线段起点的向量
+	var point_vector = point - from
+	
+	# 计算点在线段方向上的投影长度
+	var projection = point_vector.dot(direction)
+	
+	# 如果投影在线段范围外，则计算到端点的距离
+	if projection < 0:
+		return point.distance_to(from) < tolerance
+	elif projection > length:
+		return point.distance_to(to) < tolerance
+	
+	# 计算点到线段的垂直距离
+	var perp_dist = (point_vector - direction * projection).length()
+	
+	# 贝塞尔曲线连接线的更宽松的容差判断
+	return perp_dist < tolerance
