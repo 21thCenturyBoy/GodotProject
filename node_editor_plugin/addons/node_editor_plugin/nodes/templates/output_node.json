@@ -1,0 +1,19 @@
+{
+    "id": "output_node",
+    "name": "输出节点",
+    "description": "用于输出结果的节点",
+    "type": 1,
+    "color": "0.6,0.4,0.2",
+    "inputs": ["输入1", "输入2"],
+    "outputs": [],
+    "size": {
+        "x": 180,
+        "y": 120
+    },
+    "properties": {
+        "output_label": {
+            "type": "string",
+            "default": "结果"
+        }
+    }
+}

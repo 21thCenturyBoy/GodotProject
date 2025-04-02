@@ -20,6 +20,7 @@ var inputs: Array = []  # 移除严格类型以兼容JSON导入
 var outputs: Array = [] # 移除严格类型以兼容JSON导入
 var properties: Dictionary = {}
 var selected: bool = false  # 添加选中状态属性
+var custom_color: Color = Color.TRANSPARENT  # 添加自定义颜色属性
 
 # 调试标志
 var debug_mode: bool = false
@@ -102,6 +103,9 @@ func _set(property: StringName, value) -> bool:
 			selected = value
 			queue_redraw()  # 重绘以显示选中状态
 			return true
+		"custom_color":
+			custom_color = value
+			return true
 	return false
 
 # 获取节点属性的方法，用于动态获取属性
@@ -125,6 +129,8 @@ func _get(property: StringName):
 			return properties
 		"selected":
 			return selected
+		"custom_color":
+			return custom_color
 	return null
 
 # 获取属性列表，用于编辑器和脚本交互
@@ -173,6 +179,11 @@ func _get_property_list() -> Array:
 		{
 			"name": "selected",
 			"type": TYPE_BOOL,
+			"usage": PROPERTY_USAGE_SCRIPT_VARIABLE
+		},
+		{
+			"name": "custom_color",
+			"type": TYPE_COLOR,
 			"usage": PROPERTY_USAGE_SCRIPT_VARIABLE
 		}
 	]
@@ -230,6 +241,10 @@ func _draw() -> void:
 	
 	# 选择背景颜色
 	var bg_color = bg_colors[node_type] if node_type < bg_colors.size() else Color(0.3, 0.3, 0.3)
+	
+	# 如果有自定义颜色，则使用自定义颜色
+	if custom_color != Color.TRANSPARENT:
+		bg_color = custom_color
 	
 	# 绘制带边框的矩形背景
 	var rect = Rect2(Vector2.ZERO, size)

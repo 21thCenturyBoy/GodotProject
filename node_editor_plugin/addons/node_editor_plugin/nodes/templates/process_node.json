@@ -1,0 +1,19 @@
+{
+    "id": "process_node",
+    "name": "处理节点",
+    "description": "用于处理数据的节点",
+    "type": 2,
+    "color": "0.3,0.3,0.5",
+    "inputs": ["输入1", "输入2"],
+    "outputs": ["输出1", "输出2"],
+    "size": {
+        "x": 200,
+        "y": 150
+    },
+    "properties": {
+        "operation": {
+            "type": "string",
+            "default": "处理"
+        }
+    }
+}

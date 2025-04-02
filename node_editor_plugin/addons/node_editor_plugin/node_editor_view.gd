@@ -29,6 +29,7 @@ var connection_end_pos: Vector2 = Vector2.ZERO  # 连接线终点位置
 # 预加载节点场景和脚本
 const BaseNodeScene = preload("res://addons/node_editor_plugin/nodes/base_node.tscn")
 const BaseNodeScript = preload("res://addons/node_editor_plugin/nodes/base_node.gd")
+const NodeTemplateManagerScript = preload("res://addons/node_editor_plugin/nodes/node_templates_manager.gd")
 
 # 连接线绘制器
 var connection_drawer: ConnectionDrawer
@@ -36,9 +37,15 @@ var connection_drawer: ConnectionDrawer
 # 预览矩形
 var preview_control: Control
 
+# 节点模板管理器
+var template_manager: NodeTemplateManager
+
 func _ready():
 	if debug_mode:
 		print("编辑器视图准备就绪")
+	
+	# 初始化模板管理器
+	template_manager = NodeTemplateManager.new()
 	
 	# 获取UI元素引用
 	node_container = $NodeContainer
@@ -124,13 +131,209 @@ func _on_add_node_pressed() -> void:
 	if debug_mode:
 		print("添加节点按钮被点击")
 	
+	# 显示选择节点模板的对话框
+	_show_template_selection_dialog()
+
+# 显示选择节点模板的对话框
+func _show_template_selection_dialog() -> void:
+	# 创建对话框
+	var dialog = ConfirmationDialog.new()
+	dialog.title = "选择节点模板"
+	dialog.ok_button_text = "确定"
+	dialog.cancel_button_text = "取消"
+	dialog.size = Vector2(400, 300)
+	dialog.exclusive = true
+	
+	# 创建布局
+	var vbox = VBoxContainer.new()
+	vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	vbox.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	vbox.add_theme_constant_override("separation", 10)
+	
+	# 添加说明标签
+	var label = Label.new()
+	label.text = "请选择要添加的节点类型:"
+	vbox.add_child(label)
+	
+	# 创建模板列表
+	var template_list = ItemList.new()
+	template_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	template_list.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	template_list.select_mode = ItemList.SELECT_SINGLE
+	
+	# 填充模板列表
+	var templates = template_manager.get_all_templates()
+	for id in templates:
+		var template = templates[id]
+		var template_name = template.get("name", id)
+		var description = template.get("description", "")
+		template_list.add_item(template_name)
+		if description:
+			var last_idx = template_list.get_item_count() - 1
+			template_list.set_item_tooltip(last_idx, description)
+	
+	# 如果没有模板，显示提示
+	if template_list.get_item_count() == 0:
+		template_list.add_item("默认节点")
+	
+	# 默认选择第一项
+	if template_list.get_item_count() > 0:
+		template_list.select(0)
+	
+	vbox.add_child(template_list)
+	
+	# 添加描述区域
+	var description_label = Label.new()
+	description_label.text = "描述: "
+	vbox.add_child(description_label)
+	
+	# 添加描述文本
+	var description_text = RichTextLabel.new()
+	description_text.fit_content = true
+	description_text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	description_text.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	description_text.scroll_active = true
+	description_text.bbcode_enabled = true
+	
+	# 设置初始描述
+	if template_list.get_item_count() > 0:
+		var idx = 0
+		var template_id = template_manager.get_template_id_by_index(idx)
+		if template_id:
+			var template = template_manager.get_template(template_id)
+			description_text.text = template.get("description", "无描述")
+		else:
+			description_text.text = "创建一个默认节点"
+	
+	vbox.add_child(description_text)
+	
+	# 当选择改变时更新描述
+	template_list.item_selected.connect(func(idx):
+		var template_id = template_manager.get_template_id_by_index(idx)
+		if template_id:
+			var template = template_manager.get_template(template_id)
+			description_text.text = template.get("description", "无描述")
+		else:
+			description_text.text = "创建一个默认节点"
+	)
+	
+	# 添加布局到对话框
+	dialog.add_child(vbox)
+	
+	# 设置对话框边距
+	dialog.get_ok_button().size_flags_horizontal = Button.SIZE_SHRINK_END
+	dialog.get_cancel_button().size_flags_horizontal = Button.SIZE_SHRINK_END
+	
+	# 添加到场景树
+	add_child(dialog)
+	
+	# 连接确认信号
+	dialog.confirmed.connect(func():
+		var selected_idx = template_list.get_selected_items()
+		if selected_idx.size() > 0:
+			var idx = selected_idx[0]
+			var template_id = template_manager.get_template_id_by_index(idx)
+			if template_id:
+				_create_node_from_template(template_id)
+			else:
+				_create_default_node()
+	)
+	
+	# 显示对话框
+	dialog.popup_centered()
+
+# 从模板创建节点
+func _create_node_from_template(template_id: String) -> void:
+	if debug_mode:
+		print("从模板创建节点: " + template_id)
+	
+	var template = template_manager.get_template(template_id)
+	if template.is_empty():
+		print("模板不存在: " + template_id)
+		return
+	
 	# 创建基本节点
 	var autoId = 0
 	var node_id = "Node_0"
 	for i in range(1000):
 		node_id = "Node_" + str(i)
-		if nodes.has(node_id) : continue
-		else :
+		if nodes.has(node_id): continue
+		else:
+			autoId = i 
+			break
+	
+	var node = create_base_node()	
+	node.name = node_id
+	node.set("node_id", node_id)
+	node.set("node_name", template.get("name", "新节点"))
+	node.set("node_type", template.get("type", 0))
+	node.set("inputs", template.get("inputs", []))
+	node.set("outputs", template.get("outputs", []))
+	
+	# 设置属性
+	if template.has("properties"):
+		node.set("properties", template.get("properties", {}))
+	
+	# 设置颜色（如果模板中有定义）
+	if template.has("color"):
+		var color_str = template.get("color", "")
+		if color_str:
+			var color_components = color_str.split(",")
+			if color_components.size() >= 3:
+				var r = float(color_components[0])
+				var g = float(color_components[1])
+				var b = float(color_components[2])
+				var a = 1.0
+				if color_components.size() > 3:
+					a = float(color_components[3])
+				
+				# 创建颜色对象
+				var custom_color = Color(r, g, b, a)
+				node.set("custom_color", custom_color)
+	
+	# 获取节点容器的大小
+	var container_size = node_container.size
+	
+	# 获取模板中的尺寸或使用默认值
+	var node_size = Vector2(200, 150)
+	if template.has("size"):
+		var size_data = template.get("size", {})
+		node_size.x = float(size_data.get("x", 200))
+		node_size.y = float(size_data.get("y", 150))
+	
+	# 计算中心位置，考虑节点大小的偏移
+	var center_pos = Vector2(
+		(container_size.x - node_size.x) / 2,
+		(container_size.y - node_size.y) / 2
+	)
+	node.position = center_pos
+	node.custom_minimum_size = node_size
+	
+	# 添加到场景和字典
+	node_container.add_child(node)
+	nodes[node_id] = node
+	
+	# 添加到渲染队列的最前面
+	node_render_queue.push_front(node)
+	
+	if debug_mode:
+		print("从模板创建节点完成: " + node_id + " 位置: " + str(node.position))
+	
+	# 触发重绘
+	queue_redraw()
+
+# 创建一个默认节点
+func _create_default_node() -> void:
+	if debug_mode:
+		print("创建默认节点")
+	
+	# 创建基本节点
+	var autoId = 0
+	var node_id = "Node_0"
+	for i in range(1000):
+		node_id = "Node_" + str(i)
+		if nodes.has(node_id): continue
+		else:
 			autoId = i 
 			break
 	
@@ -140,12 +343,11 @@ func _on_add_node_pressed() -> void:
 	node.set("node_name", "新节点")
 	node.set("inputs", ["输入1"])
 	node.set("outputs", ["输出1"])
-
 	
-	# 获取节点容器的大小而不是视口大小
+	# 获取节点容器的大小
 	var container_size = node_container.size
 	# 计算节点的默认大小
-	var node_size = Vector2(200, 150)  # 假设的节点默认大小
+	var node_size = Vector2(200, 150)
 	# 计算中心位置，考虑节点大小的偏移
 	var center_pos = Vector2(
 		(container_size.x - node_size.x) / 2,
@@ -161,7 +363,7 @@ func _on_add_node_pressed() -> void:
 	node_render_queue.push_front(node)
 	
 	if debug_mode:
-		print("节点已添加: " + node_id + " 位置: " + str(node.position))
+		print("默认节点已添加: " + node_id + " 位置: " + str(node.position))
 	
 	# 触发重绘
 	queue_redraw()
