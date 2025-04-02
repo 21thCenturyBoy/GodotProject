@@ -91,6 +91,13 @@ func _connect_buttons():
 		add_btn.pressed.connect(_on_add_node_pressed)
 		print("添加节点按钮已连接")
 	
+	var delete_btn = $ToolBar/DeleteNodeButton
+	if delete_btn:
+		if delete_btn.is_connected("pressed", _on_delete_node_pressed):
+			delete_btn.disconnect("pressed", _on_delete_node_pressed)
+		delete_btn.pressed.connect(_on_delete_node_pressed)
+		print("删除节点按钮已连接")
+	
 	var import_btn = $ToolBar/ImportButton
 	if import_btn:
 		if import_btn.is_connected("pressed", _on_import_pressed):
@@ -787,3 +794,61 @@ class PreviewRect extends Control:
 			var start = from + normal * (count * dash_length * 2)
 			var end = start + normal * dash_length
 			draw_line(start, end, color, width)
+
+# 删除节点按钮事件处理
+func _on_delete_node_pressed() -> void:
+	if debug_mode:
+		print("删除节点按钮被点击")
+	
+	# 如果没有选中节点，显示提示框
+	if selected_node == null:
+		var dialog = AcceptDialog.new()
+		dialog.title = "提示"
+		dialog.dialog_text = "请先选择要删除的节点"
+		dialog.ok_button_text = "确定"
+		add_child(dialog)
+		dialog.popup_centered()
+		return
+	
+	# 获取选中节点的ID
+	var node_id = selected_node.get("node_id")
+	
+	if debug_mode:
+		print("准备删除节点: " + node_id)
+	
+	# 找到并删除与该节点相关的所有连接
+	var connections_to_remove = []
+	for connection in connections:
+		if connection["from_node"] == node_id or connection["to_node"] == node_id:
+			connections_to_remove.append(connection)
+	
+	for connection in connections_to_remove:
+		connections.erase(connection)
+	
+	if debug_mode:
+		print("已删除 " + str(connections_to_remove.size()) + " 个相关连接")
+	
+	# 从渲染队列中移除
+	if node_render_queue.has(selected_node):
+		node_render_queue.erase(selected_node)
+	
+	# 从节点字典中移除
+	nodes.erase(node_id)
+	
+	# 保存对当前选中节点的引用，然后取消选中
+	var node_to_delete = selected_node
+	deselect_node()
+	
+	# 从场景树中移除并释放节点
+	node_to_delete.queue_free()
+	
+	# 更新连接线绘制器
+	if connection_drawer:
+		connection_drawer.connections = connections
+		connection_drawer.queue_redraw()
+	
+	if debug_mode:
+		print("节点已删除: " + node_id)
+	
+	# 触发重绘
+	queue_redraw()

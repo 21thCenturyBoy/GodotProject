@@ -45,6 +45,10 @@ alignment = 1
 layout_mode = 2
 text = "Add Node"
 
+[node name="DeleteNodeButton" type="Button" parent="ToolBar"]
+layout_mode = 2
+text = "Delete Node"
+
 [node name="ImportButton" type="Button" parent="ToolBar"]
 layout_mode = 2
 text = "Import"
