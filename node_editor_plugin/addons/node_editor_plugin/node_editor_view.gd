@@ -19,6 +19,13 @@ var drag_offset: Vector2  # 拖拽偏移
 var drag_preview_rect: Rect2  # 拖拽预览矩形
 var connection_start_slot: Control = null
 
+# 连接线编辑状态
+var creating_connection: bool = false  # 是否正在创建连接线
+var connection_start_node: Control = null  # 起始节点
+var connection_start_slot_idx: int = -1  # 起始槽索引
+var connection_start_is_output: bool = true  # 起始槽是否为输出槽
+var connection_end_pos: Vector2 = Vector2.ZERO  # 连接线终点位置
+
 # 预加载节点场景和脚本
 const BaseNodeScene = preload("res://addons/node_editor_plugin/nodes/base_node.tscn")
 const BaseNodeScript = preload("res://addons/node_editor_plugin/nodes/base_node.gd")
@@ -46,12 +53,13 @@ func _ready():
 		node_container.mouse_filter = Control.MOUSE_FILTER_PASS
 		
 		# 创建连接线绘制器
-		connection_drawer = ConnectionDrawer.new()
+		connection_drawer = ConnectionDrawer.new(self)
 		connection_drawer.name = "ConnectionDrawer"
 		connection_drawer.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 		connection_drawer.mouse_filter = Control.MOUSE_FILTER_IGNORE  # 忽略鼠标事件
 		connection_drawer.connections = connections
 		connection_drawer.nodes = nodes
+		connection_drawer.editor_view = self  # 确保引用到编辑器视图
 		node_container.add_child(connection_drawer)
 		
 		# 创建预览控件，确保它在最顶层
@@ -387,6 +395,14 @@ func _gui_input(event: InputEvent) -> void:
 					preview_control.visible = false
 					drag_preview_rect = Rect2()
 					select_node(null)
+		
+		# 右键检测连接线并显示删除菜单
+		elif event.button_index == MOUSE_BUTTON_RIGHT and event.pressed:
+			var mouse_pos = get_global_mouse_position() - node_container.get_global_position()
+			var connection_idx = _get_connection_at_position(mouse_pos)
+			
+			if connection_idx != -1:
+				_show_connection_context_menu(connection_idx, get_global_mouse_position())
 	
 	elif event is InputEventMouseMotion:
 		if dragging_node and selected_node:
@@ -543,58 +559,110 @@ class ConnectionDrawer extends Control:
 	var connections: Array
 	var nodes: Dictionary
 	var debug_mode: bool = true
+	var editor_view = null  # 引用到编辑器视图
+	
+	func _init(view = null):
+		editor_view = view
 	
 	func _draw() -> void:
-		if connections.size() == 0:
-			return
-			
-		for connection in connections:
-			if connection is Dictionary:
-				var from_node_id = connection.get("from_node", "")
-				var to_node_id = connection.get("to_node", "")
-				
-				if not nodes.has(from_node_id) or not nodes.has(to_node_id):
-					continue
+		# 绘制已存在的连接
+		if connections.size() > 0:
+			for connection in connections:
+				if connection is Dictionary:
+					var from_node_id = connection.get("from_node", "")
+					var to_node_id = connection.get("to_node", "")
 					
-				var from_node = nodes[from_node_id]
-				var to_node = nodes[to_node_id]
-				
-				if from_node and to_node:
-					var from_slot_idx = connection.get("from_slot", 0)
-					var to_slot_idx = connection.get("to_slot", 0)
-					
-					if from_node.outputs.size() <= from_slot_idx or to_node.inputs.size() <= to_slot_idx:
+					if not nodes.has(from_node_id) or not nodes.has(to_node_id):
 						continue
+						
+					var from_node = nodes[from_node_id]
+					var to_node = nodes[to_node_id]
 					
-					# 计算连接线的起点和终点（考虑节点的全局位置）
-					var from_pos = from_node.position + Vector2(from_node.size.x, 40 + from_slot_idx * 25 + 25/2)
-					var to_pos = to_node.position + Vector2(0, 40 + to_slot_idx * 25 + 25/2)
+					if from_node and to_node:
+						var from_slot_idx = connection.get("from_slot", 0)
+						var to_slot_idx = connection.get("to_slot", 0)
+						
+						if from_node.outputs.size() <= from_slot_idx or to_node.inputs.size() <= to_slot_idx:
+							continue
+						
+						# 计算连接线的起点和终点（考虑节点的全局位置）
+						var from_pos = from_node.position + Vector2(from_node.size.x, 40 + from_slot_idx * 25 + 25/2)
+						var to_pos = to_node.position + Vector2(0, 40 + to_slot_idx * 25 + 25/2)
+						
+						# 绘制连接线
+						_draw_bezier_connection(from_pos, to_pos, Color(0.2, 0.6, 1.0))
+		
+		# 绘制正在创建的连接线
+		if editor_view and editor_view.creating_connection:
+			var start_node = editor_view.connection_start_node
+			var start_slot_idx = editor_view.connection_start_slot_idx
+			var is_output = editor_view.connection_start_is_output
+			
+			if start_node:
+				var start_pos = editor_view._get_slot_position(start_node, is_output, start_slot_idx)
+				var end_pos = editor_view.connection_end_pos
+				
+				# 检查是否有附近的槽点
+				var highlight_slot = editor_view._get_highlighted_slot()
+				
+				# 如果有附近槽点，则调整终点位置为槽点位置
+				if !highlight_slot.is_empty():
+					var target_node = highlight_slot.node
+					var target_is_output = highlight_slot.is_output
+					var target_slot_idx = highlight_slot.index
 					
-					# 计算控制点
-					var distance = from_pos.distance_to(to_pos)
-					var control_point_offset = min(distance * 0.5, 200.0)
-					var from_control = from_pos + Vector2(control_point_offset, 0)
-					var to_control = to_pos - Vector2(control_point_offset, 0)
+					# 获取槽点位置
+					var slot_pos = editor_view._get_slot_position(target_node, target_is_output, target_slot_idx)
 					
-					# 绘制贝塞尔曲线
-					var points = []
-					var steps = 20
-					for i in range(steps + 1):
-						var t = float(i) / steps
-						var point = NodeEditorView.cubic_bezier(from_pos, from_control, to_control, to_pos, t)
-						points.append(point)
+					# 绘制高亮槽点
+					draw_circle(slot_pos, 8, Color(1.0, 0.8, 0.2, 0.7))  # 黄色高亮圆圈
+					draw_circle(slot_pos, 6, Color(1.0, 1.0, 0.0, 0.9))  # 亮黄色内圈
 					
-					# 绘制曲线阴影效果
-					for i in range(points.size() - 1):
-						# 绘制阴影
-						draw_line(points[i] + Vector2(2, 2), points[i + 1] + Vector2(2, 2), Color(0, 0, 0, 0.3), 3.0)
-						# 绘制主线
-						draw_line(points[i], points[i + 1], Color(0.2, 0.6, 1.0), 2.0)
-					
-					# 绘制端点
-					var endpoint_color = Color(0.2, 0.8, 0.2)
-					draw_circle(from_pos, 4, endpoint_color)
-					draw_circle(to_pos, 4, endpoint_color)
+					# 绘制临时连接线到槽点
+					_draw_bezier_connection(start_pos, slot_pos, Color(1.0, 0.8, 0.2, 0.8), true)
+				else:
+					# 没有附近槽点，正常绘制临时连接线
+					_draw_bezier_connection(start_pos, end_pos, Color(1.0, 0.8, 0.2, 0.8), true)
+	
+	# 绘制贝塞尔曲线连接线
+	func _draw_bezier_connection(from_pos: Vector2, to_pos: Vector2, color: Color, is_preview = false) -> void:
+		# 计算控制点
+		var distance = from_pos.distance_to(to_pos)
+		var control_point_offset = min(distance * 0.5, 200.0)
+		var from_control = from_pos + Vector2(control_point_offset, 0)
+		var to_control = to_pos - Vector2(control_point_offset, 0)
+		
+		# 生成贝塞尔曲线点
+		var points = []
+		var steps = 20
+		for i in range(steps + 1):
+			var t = float(i) / steps
+			var point = NodeEditorView.cubic_bezier(from_pos, from_control, to_control, to_pos, t)
+			points.append(point)
+		
+		# 为预览线条设置特殊效果
+		if is_preview:
+			# 首先绘制更宽的背景线，增强可见性
+			for i in range(points.size() - 1):
+				# 阴影线条
+				draw_line(points[i] + Vector2(2, 2), points[i + 1] + Vector2(2, 2), Color(0, 0, 0, 0.5), 5.0)
+				
+			# 然后绘制虚线效果
+			for i in range(points.size() - 1):
+				if i % 2 == 0:  # 仅绘制偶数段，创建虚线效果
+					draw_line(points[i], points[i + 1], color, 3.0)
+		else:
+			# 常规连接线
+			for i in range(points.size() - 1):
+				# 阴影线条
+				draw_line(points[i] + Vector2(2, 2), points[i + 1] + Vector2(2, 2), Color(0, 0, 0, 0.3), 3.0)
+				# 主线条
+				draw_line(points[i], points[i + 1], color, 2.0)
+		
+		# 绘制端点
+		var endpoint_color = Color(0.2, 0.8, 0.2) if !is_preview else Color(1.0, 0.8, 0.2)
+		draw_circle(from_pos, 4, endpoint_color)
+		draw_circle(to_pos, 4, endpoint_color)
 
 # 添加静态贝塞尔曲线计算函数
 static func cubic_bezier(p0: Vector2, p1: Vector2, p2: Vector2, p3: Vector2, t: float) -> Vector2:
@@ -852,3 +920,388 @@ func _on_delete_node_pressed() -> void:
 	
 	# 触发重绘
 	queue_redraw()
+
+# 处理节点槽点击事件
+func _on_node_slot_pressed(node: Control, is_output: bool, slot_idx: int) -> void:
+	if debug_mode:
+		print("节点槽被点击: ", node.name, " ", "输出槽" if is_output else "输入槽", " 索引:", slot_idx)
+	
+	# 如果正在创建连接，先取消
+	if creating_connection:
+		_cancel_connection_creation()
+	
+	# 开始创建新连接
+	creating_connection = true
+	connection_start_node = node
+	connection_start_slot_idx = slot_idx
+	connection_start_is_output = is_output
+	
+	# 获取起始点位置
+	var start_pos = _get_slot_position(node, is_output, slot_idx)
+	
+	# 初始化终点为当前鼠标位置
+	connection_end_pos = get_global_mouse_position() - node_container.get_global_position()
+	
+	if debug_mode:
+		print("开始创建连接线 - 起点:", start_pos, "初始终点:", connection_end_pos)
+	
+	# 确保立即重绘
+	if connection_drawer:
+		connection_drawer.queue_redraw()
+	
+	# 更新视图状态
+	Input.set_mouse_mode(Input.MOUSE_MODE_HIDDEN)  # 可选：隐藏鼠标指针
+	get_viewport().set_input_as_handled()  # 标记事件已处理
+
+# 处理节点槽释放事件
+func _on_node_slot_released(node: Control, is_output: bool, slot_idx: int) -> void:
+	if debug_mode:
+		print("节点槽被释放: ", node.name, " ", "输出槽" if is_output else "输入槽", " 索引:", slot_idx)
+	
+	# 如果正在创建连接
+	if creating_connection:
+		# 检查连接的有效性 - 不同类型的槽且不是同一节点
+		var valid_connection = (connection_start_is_output != is_output) and (connection_start_node != node)
+		
+		if valid_connection:
+			# 确保始终是从输出到输入的连接
+			var from_node = connection_start_node if connection_start_is_output else node
+			var to_node = node if !is_output else connection_start_node
+			var from_slot = connection_start_slot_idx if connection_start_is_output else slot_idx
+			var to_slot = slot_idx if !is_output else connection_start_slot_idx
+			
+			# 创建连接并立即结束连接创建状态
+			_create_connection(from_node, from_slot, to_node, to_slot)
+			_end_connection_creation()
+		else:
+			# 无效连接，取消并显示提示
+			_cancel_connection_creation()
+			
+			if connection_start_node == node:
+				_show_message("不能连接到同一个节点")
+			else:
+				_show_message("只能从输出连接到输入")
+
+# 处理鼠标释放时的连接尝试
+func _try_connect_to_nearest_slot() -> bool:
+	# 如果不是在创建连接，直接返回
+	if not creating_connection:
+		return false
+	
+	# 检查附近是否有合适的槽点
+	var target_slot = {}
+	
+	# 根据起始槽类型查找合适的目标槽
+	if connection_start_is_output:
+		target_slot = _find_slot_near_position(connection_end_pos, true, false)  # 只查找输入槽
+	else:
+		target_slot = _find_slot_near_position(connection_end_pos, false, true)  # 只查找输出槽
+	
+	# 有附近的槽点且可以建立连接
+	if !target_slot.is_empty():
+		if debug_mode:
+			print("释放鼠标时找到附近槽点: ", target_slot.node.name, 
+				  " ", "输出槽" if target_slot.is_output else "输入槽", 
+				  " 索引:", target_slot.index,
+				  " 距离:", target_slot.distance)
+		
+		# 确保连接类型正确(从输出到输入)
+		var from_node = connection_start_node if connection_start_is_output else target_slot.node
+		var to_node = target_slot.node if !target_slot.is_output else connection_start_node
+		var from_slot = connection_start_slot_idx if connection_start_is_output else target_slot.index
+		var to_slot = target_slot.index if !target_slot.is_output else connection_start_slot_idx
+		
+		# 创建连接
+		_create_connection(from_node, from_slot, to_node, to_slot)
+		return true
+	
+	return false
+
+# 创建一个新的连接
+func _create_connection(from_node: Control, from_slot: int, to_node: Control, to_slot: int) -> void:
+	if debug_mode:
+		print("创建连接: ", from_node.name, ":", from_slot, " -> ", to_node.name, ":", to_slot)
+	
+	# 检查是否已存在相同的连接
+	for conn in connections:
+		if conn.from_node == from_node.get("node_id") and conn.to_node == to_node.get("node_id") and \
+		   conn.from_slot == from_slot and conn.to_slot == to_slot:
+			if debug_mode:
+				print("连接已存在")
+			return
+	
+	# 创建新连接
+	var connection = {
+		"from_node": from_node.get("node_id"),
+		"to_node": to_node.get("node_id"),
+		"from_slot": from_slot,
+		"to_slot": to_slot
+	}
+	
+	connections.append(connection)
+	
+	# 更新连接线绘制器
+	if connection_drawer:
+		connection_drawer.queue_redraw()
+	
+	if debug_mode:
+		print("连接创建成功")
+
+# 取消连接创建
+func _cancel_connection_creation() -> void:
+	if debug_mode and creating_connection:
+		print("取消创建连接")
+	
+	_end_connection_creation()
+
+# 结束连接创建状态
+func _end_connection_creation() -> void:
+	if !creating_connection:
+		return
+		
+	creating_connection = false
+	connection_start_node = null
+	connection_start_slot_idx = -1
+	
+	# 恢复鼠标显示
+	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
+	
+	# 确保连接线绘制器重绘
+	if connection_drawer:
+		connection_drawer.queue_redraw()
+	
+	if debug_mode:
+		print("结束连接线创建")
+
+# 获取节点槽的全局位置
+func _get_slot_position(node: Control, is_output: bool, slot_idx: int) -> Vector2:
+	var slot_height = 25
+	var y_offset = 40
+	var slot_y = y_offset + slot_idx * slot_height + slot_height/2
+	
+	if is_output:
+		# 输出槽在节点右侧
+		return node.position + Vector2(node.size.x, slot_y)
+	else:
+		# 输入槽在节点左侧
+		return node.position + Vector2(0, slot_y)
+
+# 显示消息对话框
+func _show_message(text: String) -> void:
+	var dialog = AcceptDialog.new()
+	dialog.title = "提示"
+	dialog.dialog_text = text
+	dialog.ok_button_text = "确定"
+	add_child(dialog)
+	dialog.popup_centered()
+
+# 根据鼠标位置判断点击的是哪条连接线
+func _get_connection_at_position(position: Vector2) -> int:
+	if connections.size() == 0:
+		return -1
+	
+	# 获取鼠标临近点（允许一定距离误差）
+	var tolerance = 10.0
+	
+	for i in range(connections.size()):
+		var connection = connections[i]
+		if connection is Dictionary:
+			var from_node_id = connection.get("from_node", "")
+			var to_node_id = connection.get("to_node", "")
+			
+			if not nodes.has(from_node_id) or not nodes.has(to_node_id):
+				continue
+				
+			var from_node = nodes[from_node_id]
+			var to_node = nodes[to_node_id]
+			
+			if from_node and to_node:
+				var from_slot_idx = connection.get("from_slot", 0)
+				var to_slot_idx = connection.get("to_slot", 0)
+				
+				if from_node.outputs.size() <= from_slot_idx or to_node.inputs.size() <= to_slot_idx:
+					continue
+				
+				# 计算连接线的起点和终点
+				var from_pos = from_node.position + Vector2(from_node.size.x, 40 + from_slot_idx * 25 + 25/2)
+				var to_pos = to_node.position + Vector2(0, 40 + to_slot_idx * 25 + 25/2)
+				
+				# 计算曲线上的点并检查距离
+				var distance = from_pos.distance_to(to_pos)
+				var control_point_offset = min(distance * 0.5, 200.0)
+				var from_control = from_pos + Vector2(control_point_offset, 0)
+				var to_control = to_pos - Vector2(control_point_offset, 0)
+				
+				var steps = 20
+				for j in range(steps):
+					var t1 = float(j) / steps
+					var t2 = float(j + 1) / steps
+					var point1 = cubic_bezier(from_pos, from_control, to_control, to_pos, t1)
+					var point2 = cubic_bezier(from_pos, from_control, to_control, to_pos, t2)
+					
+					var line_vec = point2 - point1
+					var line_len = line_vec.length()
+					
+					if line_len == 0:
+						continue
+						
+					var normal = line_vec.normalized()
+					var to_point_vec = position - point1
+					var project_len = to_point_vec.dot(normal)
+					
+					if project_len < 0 or project_len > line_len:
+						continue
+						
+					var closest_point = point1 + normal * project_len
+					var distance_to_line = (position - closest_point).length()
+					
+					if distance_to_line <= tolerance:
+						return i
+	
+	return -1
+
+# 显示连接线的右键菜单
+func _show_connection_context_menu(connection_idx: int, global_pos: Vector2) -> void:
+	var popup = PopupMenu.new()
+	popup.add_item("删除连接", 0)
+	
+	add_child(popup)
+	popup.connect("id_pressed", Callable(self, "_on_connection_menu_item_selected").bind(connection_idx))
+	popup.position = global_pos
+	popup.popup()
+
+# 处理连接线菜单选择
+func _on_connection_menu_item_selected(id: int, connection_idx: int) -> void:
+	if id == 0:  # 删除连接
+		_delete_connection(connection_idx)
+
+# 删除指定索引的连接
+func _delete_connection(connection_idx: int) -> void:
+	if connection_idx >= 0 and connection_idx < connections.size():
+		var connection = connections[connection_idx]
+		
+		if debug_mode:
+			print("删除连接:", connection)
+			
+		connections.remove_at(connection_idx)
+		
+		# 更新连接线绘制器
+		if connection_drawer:
+			connection_drawer.queue_redraw()
+			
+		if debug_mode:
+			print("连接已删除")
+
+# 根据位置查找附近的输入/输出槽
+func _find_slot_near_position(position: Vector2, input_slots_only: bool = false, output_slots_only: bool = false) -> Dictionary:
+	# 允许的最大距离 - 增加识别范围，提高用户体验
+	var max_distance = 30.0
+	var closest_slot = {}
+	var closest_distance = max_distance
+	
+	# 遍历所有节点
+	for node in nodes.values():
+		if not is_instance_valid(node):
+			continue
+			
+		var slot_height = 25
+		var y_offset = 40
+		
+		# 检查输入槽
+		if not output_slots_only:
+			for i in range(node.inputs.size()):
+				var slot_y = y_offset + i * slot_height + slot_height/2
+				var slot_pos = node.position + Vector2(0, slot_y)
+				
+				# 计算距离
+				var distance = position.distance_to(slot_pos)
+				if distance < closest_distance:
+					closest_distance = distance
+					closest_slot = {
+						"node": node,
+						"is_output": false,
+						"index": i,
+						"distance": distance
+					}
+		
+		# 检查输出槽
+		if not input_slots_only:
+			for i in range(node.outputs.size()):
+				var slot_y = y_offset + i * slot_height + slot_height/2
+				var slot_pos = node.position + Vector2(node.size.x, slot_y)
+				
+				# 计算距离
+				var distance = position.distance_to(slot_pos)
+				if distance < closest_distance:
+					closest_distance = distance
+					closest_slot = {
+						"node": node,
+						"is_output": true,
+						"index": i,
+						"distance": distance
+					}
+	
+	# 如果是创建连接的上下文，增加一些额外的验证
+	if creating_connection and not closest_slot.is_empty():
+		# 检查是否可以与起始节点连接
+		var is_valid = false
+		
+		# 确保是一个输入连接到一个输出
+		if connection_start_is_output != closest_slot.is_output:
+			# 确保不是同一个节点
+			if connection_start_node != closest_slot.node:
+				is_valid = true
+		
+		# 如果不是有效连接，返回空结果
+		if not is_valid:
+			return {}
+	
+	return closest_slot
+
+# 当正在创建连接时，获取当前鼠标附近的有效槽点
+func _get_highlighted_slot() -> Dictionary:
+	if !creating_connection:
+		return {}
+		
+	# 如果起始是输出槽，则寻找附近的输入槽
+	if connection_start_is_output:
+		return _find_slot_near_position(connection_end_pos, true, false)
+	# 如果起始是输入槽，则寻找附近的输出槽
+	else:
+		return _find_slot_near_position(connection_end_pos, false, true)
+
+# 处理全局的鼠标移动以更新连接线预览
+func _input(event: InputEvent) -> void:
+	# 使用_input而不是_unhandled_input以确保能捕获所有事件
+	if creating_connection:
+		if event is InputEventMouseMotion:
+			# 更新连接终点位置
+			connection_end_pos = get_global_mouse_position() - node_container.get_global_position()
+			
+			if debug_mode and Engine.get_frames_drawn() % 60 == 0:
+				print("全局更新连接线终点:", connection_end_pos)
+			
+			# 确保连接线绘制器重绘
+			if connection_drawer:
+				connection_drawer.queue_redraw()
+			
+			# 接受事件，防止进一步处理
+			get_viewport().set_input_as_handled()
+		
+		# 处理在空白区域点击取消连接创建或完成连接
+		elif event is InputEventMouseButton:
+			if event.button_index == MOUSE_BUTTON_LEFT and !event.pressed:
+				# 尝试连接到最近的槽点
+				if _try_connect_to_nearest_slot():
+					# 成功创建连接，结束创建状态
+					_end_connection_creation()
+				else:
+					# 没有找到附近槽点，取消连接
+					if debug_mode:
+						print("未找到附近槽点，取消连接")
+					_cancel_connection_creation()
+				
+				get_viewport().set_input_as_handled()
+			elif event.button_index == MOUSE_BUTTON_RIGHT and event.pressed:
+				_cancel_connection_creation()
+				get_viewport().set_input_as_handled()

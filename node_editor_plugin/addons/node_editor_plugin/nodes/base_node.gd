@@ -308,24 +308,104 @@ func _draw_slots() -> void:
 func _gui_input(event: InputEvent) -> void:
 	if debug_mode:
 		print(name + ": 接收到输入事件 " + str(event))
+	
+	# 检测是否点击了输入/输出槽
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
+		var slot_info = _get_slot_at_position(get_local_mouse_position())
+		if slot_info:
+			# 如果点击的是槽，触发槽点击事件
+			if event.pressed:
+				_on_slot_pressed(slot_info)
+			else:
+				_on_slot_released(slot_info)
+			# 重要：不要在这里调用accept_event()，让事件继续传播
+			# 这样编辑器视图可以处理连接线的创建和更新
+			return
+	
+	# 节点的其他事件处理（如选择、拖动等）
+	if event is InputEventMouseButton:
+		if event.button_index == MOUSE_BUTTON_LEFT:
+			# 转发事件给父节点（NodeEditorView）
+			var parent = get_parent()
+			while parent and not parent is NodeEditorView:
+				parent = parent.get_parent()
+			
+			if parent and parent is NodeEditorView:
+				# 确保父节点知道事件是来自哪个节点
+				event.set_meta("source_node", self)
+				parent._on_node_gui_input(event, self)
+			
+			# 处理节点特定的交互
+			if event.pressed:
+				if debug_mode:
+					print(name + ": 节点被点击")
+	
+	elif event is InputEventMouseMotion:
+		# 直接转发鼠标移动事件给父节点，确保连接线能正确跟随鼠标
+		var parent = get_parent()
+		while parent and not parent is NodeEditorView:
+			parent = parent.get_parent()
 		
-	# 转发事件给父节点（NodeEditorView）
+		if parent and parent is NodeEditorView:
+			event.set_meta("source_node", self)
+			parent._on_node_gui_input(event, self)
+	
+	# 接受事件，防止它继续传播到更下层
+	accept_event()
+
+# 获取鼠标位置处的槽信息
+func _get_slot_at_position(pos: Vector2) -> Dictionary:
+	var slot_height = 25
+	var y_offset = 40
+	
+	# 检查输入槽
+	for i in range(inputs.size()):
+		var slot_y = y_offset + i * slot_height
+		# 输入槽的点击区域
+		var slot_rect = Rect2(0, slot_y, 15, slot_height)
+		if slot_rect.has_point(pos):
+			return {
+				"index": i,
+				"is_output": false,
+				"node": self
+			}
+	
+	# 检查输出槽
+	for i in range(outputs.size()):
+		var slot_y = y_offset + i * slot_height
+		# 输出槽的点击区域
+		var slot_rect = Rect2(size.x - 15, slot_y, 15, slot_height)
+		if slot_rect.has_point(pos):
+			return {
+				"index": i,
+				"is_output": true,
+				"node": self
+			}
+	
+	return {}
+
+# 槽被点击时触发
+func _on_slot_pressed(slot_info: Dictionary) -> void:
+	if debug_mode:
+		print(name + ": 槽被点击 - ", "输出槽" if slot_info.is_output else "输入槽", " 索引:", slot_info.index)
+	
+	# 通知父节点
 	var parent = get_parent()
 	while parent and not parent is NodeEditorView:
 		parent = parent.get_parent()
 	
 	if parent and parent is NodeEditorView:
-		# 确保父节点知道事件是来自哪个节点
-		event.set_meta("source_node", self)
-		parent._on_node_gui_input(event, self)
+		parent._on_node_slot_pressed(self, slot_info.is_output, slot_info.index)
+
+# 槽被释放时触发
+func _on_slot_released(slot_info: Dictionary) -> void:
+	if debug_mode:
+		print(name + ": 槽被释放 - ", "输出槽" if slot_info.is_output else "输入槽", " 索引:", slot_info.index)
 	
-	# 处理节点特定的交互（如果需要）
-	if event is InputEventMouseButton:
-		if event.button_index == MOUSE_BUTTON_LEFT:
-			if event.pressed:
-				# 节点被点击了
-				if debug_mode:
-					print(name + ": 节点被点击")
+	# 通知父节点
+	var parent = get_parent()
+	while parent and not parent is NodeEditorView:
+		parent = parent.get_parent()
 	
-	# 接受事件，防止它继续传播
-	accept_event() 
+	if parent and parent is NodeEditorView:
+		parent._on_node_slot_released(self, slot_info.is_output, slot_info.index) 

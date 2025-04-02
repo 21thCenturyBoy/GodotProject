@@ -1,0 +1,84 @@
+{
+  "connections": [
+    {
+      "from_node": "TestNode1",
+      "from_slot": 0.0,
+      "to_node": "TestNode2",
+      "to_slot": 0.0
+    },
+    {
+      "from_node": "Node_0",
+      "from_slot": 0,
+      "to_node": "TestNode1",
+      "to_slot": 0
+    }
+  ],
+  "nodes": [
+    {
+      "id": "TestNode1",
+      "inputs": [
+        "输入1"
+      ],
+      "name": "测试节点1",
+      "outputs": [
+        "输出1"
+      ],
+      "position": {
+        "x": 645.0,
+        "y": 316.0
+      },
+      "properties": {
+
+      },
+      "size": {
+        "x": 200.0,
+        "y": 100.0
+      },
+      "type": 2
+    },
+    {
+      "id": "TestNode2",
+      "inputs": [
+        "输入1"
+      ],
+      "name": "测试节点2",
+      "outputs": [
+        "输出1"
+      ],
+      "position": {
+        "x": 891.5,
+        "y": 1054.0
+      },
+      "properties": {
+
+      },
+      "size": {
+        "x": 200.0,
+        "y": 100.0
+      },
+      "type": 2
+    },
+    {
+      "id": "Node_0",
+      "inputs": [
+        "输入1"
+      ],
+      "name": "新节点",
+      "outputs": [
+        "输出1"
+      ],
+      "position": {
+        "x": 331.0,
+        "y": 588.0
+      },
+      "properties": {
+
+      },
+      "size": {
+        "x": 200.0,
+        "y": 100.0
+      },
+      "type": 2
+    }
+  ]
+}
