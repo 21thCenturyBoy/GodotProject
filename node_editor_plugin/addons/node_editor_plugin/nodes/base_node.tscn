@@ -1,0 +1,11 @@
+[gd_scene load_steps=2 format=3 uid="uid://cswb4nroyejhe"]
+
+[ext_resource type="Script" uid="uid://dwmvt6pvfdwv" path="res://addons/node_editor_plugin/nodes/base_node.gd" id="1_5j5rw"]
+
+[node name="BaseNode" type="Control"]
+custom_minimum_size = Vector2(200, 100)
+layout_mode = 3
+anchors_preset = 0
+offset_right = 200.0
+offset_bottom = 100.0
+script = ExtResource("1_5j5rw")
