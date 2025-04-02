@@ -25,6 +25,12 @@ var custom_color: Color = Color.TRANSPARENT  # 添加自定义颜色属性
 # 调试标志
 var debug_mode: bool = false
 
+# 调整大小相关变量
+var resizing: bool = false
+var resize_handle_rect: Rect2
+var resize_handle_height: int = 10
+var min_node_size: Vector2 = Vector2(150, 80)
+
 # 信号
 signal connection_started(from_slot: Control, to_slot: Control)
 signal connection_ended(from_slot: Control, to_slot: Control)
@@ -272,6 +278,9 @@ func _draw() -> void:
 	# 绘制输入输出槽
 	_draw_slots()
 	
+	# 绘制调整大小把手
+	_draw_resize_handle()
+	
 	if debug_mode:
 		print("节点绘制完成")
 
@@ -324,6 +333,22 @@ func _gui_input(event: InputEvent) -> void:
 	if debug_mode:
 		print(name + ": 接收到输入事件 " + str(event))
 	
+	# 处理调整大小
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
+		if event.pressed and _is_mouse_over_resize_handle():
+			resizing = true
+			accept_event()
+			return
+		elif !event.pressed and resizing:
+			resizing = false
+			accept_event()
+			return
+	
+	if event is InputEventMouseMotion and resizing:
+		_handle_resize(event.relative)
+		accept_event()
+		return
+	
 	# 检测是否点击了输入/输出槽
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
 		var slot_info = _get_slot_at_position(get_local_mouse_position())
@@ -356,6 +381,12 @@ func _gui_input(event: InputEvent) -> void:
 					print(name + ": 节点被点击")
 	
 	elif event is InputEventMouseMotion:
+		# 更新鼠标样式，如果鼠标在调整大小区域
+		if _is_mouse_over_resize_handle():
+			Input.set_default_cursor_shape(Input.CURSOR_VSIZE)
+		else:
+			Input.set_default_cursor_shape(Input.CURSOR_ARROW)
+			
 		# 直接转发鼠标移动事件给父节点，确保连接线能正确跟随鼠标
 		var parent = get_parent()
 		while parent and not parent is NodeEditorView:
@@ -424,3 +455,45 @@ func _on_slot_released(slot_info: Dictionary) -> void:
 	
 	if parent and parent is NodeEditorView:
 		parent._on_node_slot_released(self, slot_info.is_output, slot_info.index) 
+
+# 检查鼠标是否在调整大小的把手上
+func _is_mouse_over_resize_handle() -> bool:
+	resize_handle_rect = Rect2(0, size.y - resize_handle_height, size.x, resize_handle_height)
+	return resize_handle_rect.has_point(get_local_mouse_position())
+
+# 处理调整大小
+func _handle_resize(relative: Vector2) -> void:
+	var new_size = size + Vector2(0, relative.y)
+	new_size.y = max(new_size.y, min_node_size.y)
+	new_size.x = max(new_size.x, min_node_size.x)
+	
+	custom_minimum_size = new_size
+	node_size = new_size
+	
+	# 触发大小变更通知
+	size = new_size
+	queue_redraw()
+
+# 绘制调整大小把手
+func _draw_resize_handle() -> void:
+	var handle_rect = Rect2(0, size.y - resize_handle_height, size.x, resize_handle_height)
+	
+	# 绘制半透明背景
+	draw_rect(handle_rect, Color(0.3, 0.3, 0.3, 0.5), true)
+	
+	# 绘制把手图标 - 三条水平线
+	var line_width = min(30, size.x - 10)
+	var start_x = (size.x - line_width) / 2
+	var y_positions = [
+		size.y - resize_handle_height * 0.25,
+		size.y - resize_handle_height * 0.5,
+		size.y - resize_handle_height * 0.75,
+	]
+	
+	for y in y_positions:
+		draw_line(
+			Vector2(start_x, y),
+			Vector2(start_x + line_width, y),
+			Color(1, 1, 1, 0.7),
+			1.0
+		) 

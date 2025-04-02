@@ -262,7 +262,18 @@ func _create_node_from_template(template_id: String) -> void:
 			autoId = i 
 			break
 	
-	var node = create_base_node()	
+	var node
+	
+	# 根据模板ID创建特定类型的节点
+	if template_id == "message_node":
+		# 为消息节点加载特定的脚本
+		var MessageNodeScript = load("res://addons/node_editor_plugin/nodes/message_node.gd")
+		node = BaseNodeScene.instantiate()
+		node.set_script(MessageNodeScript)
+	else:
+		# 创建常规基本节点
+		node = create_base_node()
+	
 	node.name = node_id
 	node.set("node_id", node_id)
 	node.set("node_name", template.get("name", "新节点"))
@@ -506,7 +517,24 @@ func _load_blueprint(data: Dictionary) -> void:
 			if debug_mode:
 				print("创建节点: " + node_id)
 			
-			var node = create_base_node()  # 使用帮助方法
+			var node
+			
+			# 检查节点类型是否为消息节点
+			var is_message_node = false
+			if node_id.begins_with("message_node") or node_data.get("type", 0) == 4:  # 类型4是CUSTOM
+				var properties = node_data.get("properties", {})
+				if properties.has("message"):
+					is_message_node = true
+			
+			if is_message_node:
+				# 加载消息节点脚本
+				var MessageNodeScript = load("res://addons/node_editor_plugin/nodes/message_node.gd")
+				node = BaseNodeScene.instantiate()
+				node.set_script(MessageNodeScript)
+			else:
+				# 创建基本节点
+				node = create_base_node()  # 使用帮助方法
+			
 			node.name = node_id
 			
 			# 计算节点位置，使整体居中
