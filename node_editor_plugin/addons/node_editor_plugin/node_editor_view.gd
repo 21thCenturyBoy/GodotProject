@@ -132,6 +132,14 @@ func _connect_buttons():
 			export_btn.disconnect("pressed", _on_export_pressed)
 		export_btn.pressed.connect(_on_export_pressed)
 		print("导出按钮已连接")
+		
+	# 添加自动排列按钮连接
+	var arrange_btn = $ToolBar/ArrangeButton
+	if arrange_btn:
+		if arrange_btn.is_connected("pressed", _on_auto_arrange_pressed):
+			arrange_btn.disconnect("pressed", _on_auto_arrange_pressed)
+		arrange_btn.pressed.connect(_on_auto_arrange_pressed)
+		print("自动排列按钮已连接")
 
 func _on_add_node_pressed() -> void:
 	if debug_mode:
@@ -1615,3 +1623,170 @@ func _is_point_on_connection(point: Vector2, from: Vector2, to: Vector2, toleran
 	
 	# 贝塞尔曲线连接线的更宽松的容差判断
 	return perp_dist < tolerance
+
+# 添加自动排列按钮事件处理
+func _on_auto_arrange_pressed() -> void:
+	if debug_mode:
+		print("自动排列按钮被点击")
+	
+	# 执行自动排列
+	_auto_arrange_nodes()
+
+# 自动排列节点函数 - 横向布局
+func _auto_arrange_nodes() -> void:
+	if nodes.size() <= 1:
+		return
+	
+	if debug_mode:
+		print("开始自动排列节点")
+	
+	# 第一步：分析节点间的连接关系，构建有向图
+	var graph = {}  # 存储节点的连接关系
+	var in_degree = {}  # 存储每个节点的入度（指向该节点的连接数量）
+	
+	# 初始化图数据结构
+	for node_id in nodes:
+		graph[node_id] = []
+		in_degree[node_id] = 0
+	
+	# 填充图
+	for connection in connections:
+		var from_node = connection.get("from_node", "")
+		var to_node = connection.get("to_node", "")
+		
+		if graph.has(from_node) and graph.has(to_node):
+			graph[from_node].append(to_node)
+			in_degree[to_node] += 1
+	
+	# 第二步：使用拓扑排序确定节点的层级（列）
+	var layers = []  # 每一层的节点
+	var current_layer = []  # 当前层的节点
+	
+	# 找出入度为0的节点作为第一层
+	for node_id in in_degree:
+		if in_degree[node_id] == 0:
+			current_layer.append(node_id)
+	
+	# 如果没有入度为0的节点，选择任意节点作为起点
+	if current_layer.is_empty() and !nodes.is_empty():
+		var start_node = nodes.keys()[0]
+		current_layer.append(start_node)
+	
+	# 进行拓扑排序
+	while !current_layer.is_empty():
+		layers.append(current_layer.duplicate())
+		var next_layer = []
+		
+		for node_id in current_layer:
+			# 遍历当前节点的所有后继节点
+			for next_node in graph[node_id]:
+				in_degree[next_node] -= 1
+				# 如果后继节点入度为0，添加到下一层
+				if in_degree[next_node] == 0:
+					next_layer.append(next_node)
+		
+		current_layer = next_layer
+	
+	# 确保所有节点都被分配到某一层
+	var placed_nodes = {}
+	for layer in layers:
+		for node_id in layer:
+			placed_nodes[node_id] = true
+	
+	# 找出未分配的节点
+	var unplaced_nodes = []
+	for node_id in nodes:
+		if !placed_nodes.has(node_id):
+			unplaced_nodes.append(node_id)
+	
+	# 将未分配的节点添加到适当的层（简单添加到最后一层）
+	if !unplaced_nodes.is_empty():
+		layers.append(unplaced_nodes)
+	
+	if debug_mode:
+		print("节点分层完成，共 ", layers.size(), " 层")
+		for i in range(layers.size()):
+			print("第 ", i+1, " 层节点: ", layers[i])
+	
+	# 第三步：计算每一层节点的位置
+	var node_positions = {}  # 存储每个节点的新位置
+	var layer_x_positions = []  # 每层的x位置
+	var horizontal_spacing = 300  # 层间水平间距
+	
+	# 计算每层的x位置
+	var current_x = 50  # 起始x位置
+	for i in range(layers.size()):
+		layer_x_positions.append(current_x)
+		
+		# 计算此层中最宽节点的宽度
+		var max_width = 0
+		for node_id in layers[i]:
+			if nodes.has(node_id):
+				var node = nodes[node_id]
+				max_width = max(max_width, node.size.x)
+		
+		current_x += max_width + horizontal_spacing
+	
+	# 第四步：优化每层内节点的垂直位置，减少交叉线
+	var vertical_spacing = 50  # 节点垂直间距
+	
+	for i in range(layers.size()):
+		var layer = layers[i]
+		var layer_x = layer_x_positions[i]
+		var current_y = 50  # 每层起始y位置
+		
+		# 简单排序：如果是第一层，直接排列；否则基于连接关系排序
+		if i > 0:
+			# 按上一层连接的平均位置排序节点
+			var node_scores = {}
+			for node_id in layer:
+				node_scores[node_id] = 0
+				var connected_count = 0
+				
+				# 查找与上一层节点的连接
+				for connection in connections:
+					var from_node = connection.get("from_node", "")
+					var to_node = connection.get("to_node", "")
+					
+					# 如果当前节点是接收端
+					if to_node == node_id and layers[i-1].has(from_node):
+						if node_positions.has(from_node):
+							node_scores[node_id] += node_positions[from_node].y
+							connected_count += 1
+					# 如果当前节点是发送端
+					elif from_node == node_id and layers[i-1].has(to_node):
+						if node_positions.has(to_node):
+							node_scores[node_id] += node_positions[to_node].y
+							connected_count += 1
+				
+				# 计算平均位置分数
+				if connected_count > 0:
+					node_scores[node_id] /= connected_count
+				else:
+					node_scores[node_id] = current_y  # 默认位置
+			
+			# 根据得分排序节点
+			layer.sort_custom(func(a, b): return node_scores[a] < node_scores[b])
+		
+		# 为当前层的每个节点分配位置
+		for node_id in layer:
+			if nodes.has(node_id):
+				var node = nodes[node_id]
+				node_positions[node_id] = Vector2(layer_x, current_y)
+				current_y += node.size.y + vertical_spacing
+	
+	# 第五步：应用新位置到所有节点
+	for node_id in node_positions:
+		if nodes.has(node_id):
+			var node = nodes[node_id]
+			node.position = node_positions[node_id]
+	
+	# 重绘连接线
+	if connection_drawer:
+		connection_drawer.queue_redraw()
+	
+	if debug_mode:
+		print("节点自动排列完成")
+	
+	# 触发重绘
+	queue_redraw()
