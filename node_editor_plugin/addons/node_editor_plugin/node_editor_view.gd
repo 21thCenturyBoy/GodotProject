@@ -73,7 +73,11 @@ func _ready():
 	_connect_buttons()
 	
 	# 创建测试节点
-	_create_test_node()
+	#_create_test_node()
+	var relative_path = "res://addons/node_editor_plugin/test/example_test.json"
+	_on_import_file_selected(relative_path)
+	# 导入测试节点
+	
 	
 	if debug_mode:
 		print("界面初始化完成")
@@ -106,11 +110,22 @@ func _on_add_node_pressed() -> void:
 		print("添加节点按钮被点击")
 	
 	# 创建基本节点
-	var node = create_base_node()
-	var node_id = "Node_" + str(nodes.size())
+	var autoId = 0
+	var node_id = "Node_0"
+	for i in range(1000):
+		node_id = "Node_" + str(i)
+		if nodes.has(node_id) : continue
+		else :
+			autoId = i 
+			break
+	
+	var node = create_base_node()	
 	node.name = node_id
 	node.set("node_id", node_id)
 	node.set("node_name", "新节点")
+	node.set("inputs", ["输入1"])
+	node.set("outputs", ["输出1"])
+
 	
 	# 获取节点容器的大小而不是视口大小
 	var container_size = node_container.size
