@@ -85,24 +85,24 @@
 ```json
 {
   "nodes": [
-    {
-      "id": "Node_0",
-      "name": "节点名称",
-      "type": 4,
-      "position": {"x": 100, "y": 200},
-      "size": {"x": 200, "y": 150},
-      "inputs": ["输入1"],
-      "outputs": ["输出1"],
-      "properties": { ... }
-    }
+	{
+	  "id": "Node_0",
+	  "name": "节点名称",
+	  "type": 4,
+	  "position": {"x": 100, "y": 200},
+	  "size": {"x": 200, "y": 150},
+	  "inputs": ["输入1"],
+	  "outputs": ["输出1"],
+	  "properties": { ... }
+	}
   ],
   "connections": [
-    {
-      "from_node": "Node_0",
-      "to_node": "Node_1", 
-      "from_slot": 0,
-      "to_slot": 0
-    }
+	{
+	  "from_node": "Node_0",
+	  "to_node": "Node_1", 
+	  "from_slot": 0,
+	  "to_slot": 0
+	}
   ]
 }
 ```
@@ -112,17 +112,17 @@
 {
   "case_name": "示例场景",
   "root_node": {
-    "children": [
-      {
-        "children": [ ... ],
-        "input_text": "节点文本内容",
-        "node_name": "子节点名称",
-        "node_type": "user_input"
-      }
-    ],
-    "input_text": "",
-    "node_name": "根节点名称",
-    "node_type": "user_input"
+	"children": [
+	  {
+		"children": [ ... ],
+		"input_text": "节点文本内容",
+		"node_name": "子节点名称",
+		"node_type": "user_input"
+	  }
+	],
+	"input_text": "",
+	"node_name": "根节点名称",
+	"node_type": "user_input"
   }
 }
 ```

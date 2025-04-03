@@ -37,6 +37,8 @@ const BaseNodeScene = preload("res://addons/node_editor_plugin/nodes/base_node.t
 const BaseNodeScript = preload("res://addons/node_editor_plugin/nodes/base_node.gd")
 const NodeTemplateManagerScript = preload("res://addons/node_editor_plugin/nodes/node_templates_manager.gd")
 
+signal export_custom_data(data)
+
 # 连接线绘制器
 var connection_drawer: ConnectionDrawer
 
@@ -833,6 +835,9 @@ func _export_custom_data() -> void:
 		"case_name": canvas_name,
 		"root_node": _node_to_custom_data(root_node)
 	}
+	
+	# 触发信号，传递数据
+	emit_signal("export_custom_data", custom_data)
 	
 	# 创建对话框显示导出结果
 	_show_export_result_dialog(JSON.stringify(custom_data, "  "))
