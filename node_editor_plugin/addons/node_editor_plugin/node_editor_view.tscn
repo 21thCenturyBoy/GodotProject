@@ -15,6 +15,7 @@ grow_vertical = 2
 script = ExtResource("1_2u4vx")
 
 [node name="Background" type="Panel" parent="."]
+modulate = Color(1, 1, 1, 0.729412)
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -33,6 +34,23 @@ grow_horizontal = 2
 grow_vertical = 2
 mouse_filter = 1
 
+[node name="DebugContainer" type="VBoxContainer" parent="."]
+layout_mode = 0
+offset_right = 191.0
+offset_bottom = 76.0
+
+[node name="CanvasNameLabel" type="Label" parent="DebugContainer"]
+layout_mode = 2
+text = "未命名"
+
+[node name="DebugToggle" type="CheckButton" parent="DebugContainer"]
+layout_mode = 2
+size_flags_horizontal = 0
+text = "Debug "
+
+[node name="CanvasInfoLabel" type="Label" parent="DebugContainer"]
+layout_mode = 2
+
 [node name="ToolBar" type="HBoxContainer" parent="."]
 layout_mode = 1
 anchors_preset = 10
@@ -49,14 +67,10 @@ text = "Add Node"
 layout_mode = 2
 text = "Delete Node"
 
-[node name="ImportButton" type="Button" parent="ToolBar"]
-layout_mode = 2
-text = "Import"
-
-[node name="ExportButton" type="Button" parent="ToolBar"]
-layout_mode = 2
-text = "Export"
-
 [node name="ArrangeButton" type="Button" parent="ToolBar"]
 layout_mode = 2
-text = "Auto Arrange"
+text = "Align"
+
+[node name="SaveButton" type="Button" parent="ToolBar"]
+layout_mode = 2
+text = "Save"

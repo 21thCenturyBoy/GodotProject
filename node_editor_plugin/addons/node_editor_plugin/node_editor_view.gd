@@ -1,43 +1,65 @@
 @tool
 extends Control
 
-class_name NodeEditorView  # 添加类名以便引用静态方法
+class_name NodeEditorView # 添加类名以便引用静态方法
 
 # 调试标志
-var debug_mode: bool = true  # 临时启用调试模式
+var debug_mode: bool = true # 临时启用调试模式
 
 # 节点容器
 var node_container: Control
-var nodes: Dictionary = {}
-var node_render_queue: Array = []  # 节点渲染队列，决定绘制顺序
+var nodes: Dictionary = {} # Node节点字典
+var node_render_queue: Array = [] # 节点渲染队列，决定绘制顺序
 var connections: Array = []
 var selected_node: Control = null
 var dragging_node: bool = false
-var drag_started: bool = false  # 添加一个标志，表示拖拽是否真正开始
+var drag_started: bool = false # 添加一个标志，表示拖拽是否真正开始
 var drag_start_pos: Vector2
-var drag_offset: Vector2  # 拖拽偏移
-var drag_preview_rect: Rect2  # 拖拽预览矩形
+var drag_offset: Vector2 # 拖拽偏移
+var drag_preview_rect: Rect2 # 拖拽预览矩形
 var connection_start_slot: Control = null
 
 # 连接线编辑状态
-var creating_connection: bool = false  # 是否正在创建连接线
-var connection_start_node: Control = null  # 起始节点
-var connection_start_slot_idx: int = -1  # 起始槽索引
-var connection_start_is_output: bool = true  # 起始槽是否为输出槽
-var connection_end_pos: Vector2 = Vector2.ZERO  # 连接线终点位置
+var creating_connection: bool = false # 是否正在创建连接线
+var connection_start_node: Control = null # 起始节点
+var connection_start_slot_idx: int = -1 # 起始槽索引
+var connection_start_is_output: bool = true # 起始槽是否为输出槽
+var connection_end_pos: Vector2 = Vector2.ZERO # 连接线终点位置
+
+# 连接线编辑参数
+var click_line_tolerance: float = 15.0 # 点击线容差度
 
 # 画布拖拽相关变量
-var canvas_offset = Vector2.ZERO  # 画布偏移量
-var dragging_canvas = false  # 是否正在拖拽画布
-var canvas_drag_start_pos = Vector2.ZERO  # 拖拽开始位置
-var canvas_name = "未命名"  # 画布名称
+var canvas_offset = Vector2.ZERO # 画布偏移量
+var dragging_canvas = false # 是否正在拖拽画布
+var canvas_drag_start_pos = Vector2.ZERO # 拖拽开始位置
+var canvas_name = "未命名" # 画布名称
 
 # 预加载节点场景和脚本
 const BaseNodeScene = preload("res://addons/node_editor_plugin/nodes/base_node.tscn")
 const BaseNodeScript = preload("res://addons/node_editor_plugin/nodes/base_node.gd")
 const NodeTemplateManagerScript = preload("res://addons/node_editor_plugin/nodes/node_templates_manager.gd")
+const UserInputNodeScript = preload("res://addons/node_editor_plugin/nodes/user_input.gd")
 
+# 信号
+signal editor_view_destroyed
 signal export_custom_data(data)
+
+class CustomData extends Node:
+	var module_name: String = ""
+	var tool_name: String = ""
+	var case_name: String = ""
+	var root_node: DataBaseNode = null
+	pass
+
+# 自定义数据
+var custom_data: CustomData = null
+var module_name: String = ""
+var tool_name: String = ""
+var case_name: String = ""
+
+# 显示tips队列
+var show_tips_queue = []
 
 # 连接线绘制器
 var connection_drawer: ConnectionDrawer
@@ -71,21 +93,22 @@ func _ready():
 		connection_drawer = ConnectionDrawer.new(self)
 		connection_drawer.name = "ConnectionDrawer"
 		connection_drawer.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-		connection_drawer.mouse_filter = Control.MOUSE_FILTER_IGNORE  # 忽略鼠标事件
+		connection_drawer.mouse_filter = Control.MOUSE_FILTER_IGNORE # 忽略鼠标事件
 		connection_drawer.connections = connections
 		connection_drawer.nodes = nodes
-		connection_drawer.editor_view = self  # 确保引用到编辑器视图
+		connection_drawer.editor_view = self # 确保引用到编辑器视图
 		node_container.add_child(connection_drawer)
 		
 		# 创建预览控件，确保它在最顶层
 		preview_control = PreviewRect.new()
 		preview_control.name = "PreviewRect"
 		preview_control.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-		preview_control.mouse_filter = Control.MOUSE_FILTER_IGNORE  # 忽略鼠标事件
+		preview_control.mouse_filter = Control.MOUSE_FILTER_IGNORE # 忽略鼠标事件
 		preview_control.visible = false
 		add_child(preview_control)
 		
-		print("NodeContainer、ConnectionDrawer和PreviewRect已设置")
+		if debug_mode:
+			print("NodeContainer、ConnectionDrawer和PreviewRect已设置")
 	else:
 		push_error("NodeContainer未找到!")
 	
@@ -94,16 +117,14 @@ func _ready():
 	
 	# 连接按钮信号
 	_connect_buttons()
-	
-	# 创建测试节点
-	#_create_test_node()
-	var relative_path = "res://addons/node_editor_plugin/test/example_test.json"
-	_on_import_file_selected(relative_path)
-	# 导入测试节点
-	
-	
+
 	if debug_mode:
 		print("界面初始化完成")
+
+func _exit_tree():
+	emit_signal("editor_view_destroyed")
+	if debug_mode:
+		print("节点编辑器视图已被销毁，信号已触发。")
 
 func _connect_buttons():
 	# 直接连接按钮事件，不使用信号机制
@@ -112,28 +133,16 @@ func _connect_buttons():
 		if add_btn.is_connected("pressed", _on_add_node_pressed):
 			add_btn.disconnect("pressed", _on_add_node_pressed)
 		add_btn.pressed.connect(_on_add_node_pressed)
-		print("添加节点按钮已连接")
+		if debug_mode:
+			print("添加节点按钮已连接")
 	
 	var delete_btn = $ToolBar/DeleteNodeButton
 	if delete_btn:
 		if delete_btn.is_connected("pressed", _on_delete_node_pressed):
 			delete_btn.disconnect("pressed", _on_delete_node_pressed)
 		delete_btn.pressed.connect(_on_delete_node_pressed)
-		print("删除节点按钮已连接")
-	
-	var import_btn = $ToolBar/ImportButton
-	if import_btn:
-		if import_btn.is_connected("pressed", _on_import_pressed):
-			import_btn.disconnect("pressed", _on_import_pressed)
-		import_btn.pressed.connect(_on_import_pressed)
-		print("导入按钮已连接")
-	
-	var export_btn = $ToolBar/ExportButton
-	if export_btn:
-		if export_btn.is_connected("pressed", _on_export_pressed):
-			export_btn.disconnect("pressed", _on_export_pressed)
-		export_btn.pressed.connect(_on_export_pressed)
-		print("导出按钮已连接")
+		if debug_mode:
+			print("删除节点按钮已连接")
 		
 	# 添加自动排列按钮连接
 	var arrange_btn = $ToolBar/ArrangeButton
@@ -141,8 +150,223 @@ func _connect_buttons():
 		if arrange_btn.is_connected("pressed", _on_auto_arrange_pressed):
 			arrange_btn.disconnect("pressed", _on_auto_arrange_pressed)
 		arrange_btn.pressed.connect(_on_auto_arrange_pressed)
-		print("自动排列按钮已连接")
+		if debug_mode:
+			print("自动排列按钮已连接")
+		
+	var save_btn = $ToolBar/SaveButton
+	if save_btn:
+		if save_btn.is_connected("pressed", _on_save_pressed):
+			save_btn.disconnect("pressed", _on_save_pressed)
+		save_btn.pressed.connect(_on_save_pressed)
+		if debug_mode:
+			print("保存按钮已连接")
 
+# 导入自定义数据
+func _import_custom_data(test_case: CustomData) -> void:
+	if debug_mode:
+		print("开始导入自定义数据")
+	
+	# 设置模块名称
+	module_name = test_case.module_name
+	# 设置工具名称
+	tool_name = test_case.tool_name
+	# 设置用例名称
+	case_name = test_case.case_name
+
+	# 提取蓝图名称
+	update_canvas_name(test_case.module_name + "/" + test_case.tool_name + "/" + test_case.case_name)
+
+	# 清除现有节点和连接
+	for node in nodes.values():
+		node.queue_free()
+	nodes.clear()
+	node_render_queue.clear() # 清空渲染队列
+	connections.clear()
+	
+	# 更新连接线绘制器的引用
+	if connection_drawer:
+		connection_drawer.connections = connections
+		connection_drawer.nodes = nodes
+	
+	# 获取节点容器的大小
+	var container_size = node_container.size
+	# 计算中心点偏移
+	var center_offset = Vector2(container_size.x / 2, container_size.y / 2)
+	
+	# 导入根节点及其子节点
+	var root_data = test_case.root_node
+	_create_node_hierarchy(root_data, null, center_offset, 0)
+	
+	# 确保所有节点都重绘
+	for node in nodes.values():
+		node.queue_redraw()
+	
+	# 重绘连接线
+	if connection_drawer:
+		connection_drawer.queue_redraw()
+	
+	# 自动排列节点以获得更好的布局
+	_auto_arrange_nodes()
+	
+	custom_data = test_case
+	
+	if debug_mode:
+		print("自定义数据导入完成，已加载 " + str(nodes.size()) + " 个节点和 " + str(connections.size()) + " 个连接")
+	
+
+# 根据模版id创建节点
+func _create_node_from_template_id(template_id: String) -> Node:
+	var template = template_manager.get_template(template_id)
+	if template.is_empty():
+		print("模板不存在: " + template_id)
+		return null
+	
+	# 创点实例
+	var node = BaseNodeScene.instantiate()
+	if template.get("type", 0) == BaseNodeScript.NodeType.USER_INPUT:
+		node.set_script(UserInputNodeScript)
+	else:
+		# 确保节点接收输入事件
+		node.mouse_filter = Control.MOUSE_FILTER_STOP
+	return node
+
+# 导出自定义数据
+func _on_save_pressed() -> void:
+	if debug_mode:
+		print("开始导出自定义数据")
+	
+	# 查找根节点（没有输入槽或无连接的输入槽的节点）
+	var root_nodes = _find_root_nodes()
+	
+	if root_nodes.is_empty():
+		_show_message("导出失败：找不到根节点。")
+		return
+		
+	if root_nodes.size() > 1:
+		_show_message("导出失败：找到多个根节点，自定义数据格式只支持单根节点。")
+		return
+	
+	var root_node = root_nodes[0]
+	
+	# 保存自定义数据格式
+	var root_custom_node = _node_to_custom_data(root_node)
+
+	show_tips("保存成功",Color.GREEN,Color.BLACK)
+	# 触发信号，传递数据
+	emit_signal("export_custom_data", root_custom_node, canvas_name)
+
+# 将节点转换为自定义数据格式，并根据图的连线创建子的树形关系，并返回自定义数据
+func _node_to_custom_data(node: Control) -> DataBaseNode:
+	var node_id = node.get("node_id") if node.get("node_id") else node.name
+	
+	if debug_mode:
+		print("处理节点: ", node_id)
+	
+	# 获取节点的 TestBaseNode
+	var test_base_node = node.get("cur_test_base_node")
+	if not test_base_node:
+		if debug_mode:
+			print("错误：节点没有关联的 TestBaseNode: ", node_id)
+		return null
+	
+	# 处理特殊节点类型（如 UserInputNode）
+	if node.get_script() == UserInputNodeScript:
+		# 获取 UserInputNode 的 text_edit 控件
+		var text_edit = node.get_node("MessageEditor")
+		if text_edit and text_edit is TextEdit:
+			var input_text = text_edit.text # 获取文本数据
+			test_base_node.message_input_text(input_text) # 设置文本到 TestBaseNode
+	
+	# 检查输出槽数量
+	var outputs_count = 0
+	if "outputs" in node:
+		var outputs = node.outputs
+		if outputs is Array:
+			outputs_count = outputs.size()
+	
+	if outputs_count != 1 and outputs_count != 0:
+		if debug_mode:
+			print("警告：节点输出槽数量异常，节点ID: ", node_id, " 输出槽数量: ", outputs_count)
+	
+	# 清空现有的子节点列表，以便重新构建
+	test_base_node.children.clear()
+	
+	# 如果有输出槽，处理连接
+	if outputs_count > 0:
+		# 获取第一个输出槽的所有连接
+		var output_slot_idx = 0 # 使用第一个输出槽
+		var children_connections = []
+		
+		# 收集所有使用第一个输出槽的连接
+		for connection in connections:
+			if connection["from_node"] == node_id and connection["from_slot"] == output_slot_idx:
+				children_connections.append(connection)
+		
+		# 打印所有连接
+		for connection in connections:
+			print("connection: ", connection)
+		print("connections个数: ", connections.size())
+
+		# 打印所有连接
+		for connection in children_connections:
+			print("connection: ", connection)
+		print("children_connections个数: ", children_connections.size())
+		
+		# 按连接顺序处理所有子节点
+		for connection in children_connections:
+			var child_id = connection["to_node"]
+			if nodes.has(child_id):
+				var child_node = nodes[child_id]
+				
+				# 递归处理子节点的连接
+				var child_test_base_node = _node_to_custom_data(child_node)
+				if child_test_base_node:
+					# 添加到子节点列表
+					test_base_node.children.append(child_test_base_node)
+					
+					if debug_mode:
+						print("添加子节点: ", node_id, " -> ", child_id, " 位置: ", test_base_node.children.size() - 1)
+
+	return test_base_node
+
+# 显示tips
+func show_tips(tips:String,text_color:Color = Color.WHITE,background_color:Color = Color.BLACK) -> void:
+
+	var tool_bar = $ToolBar
+	
+	# 在ToolBar下方 显示tips
+	var tips_label = Label.new()
+	tips_label.text = tips
+	tips_label.add_theme_color_override("font_color", text_color)
+	tips_label.add_theme_color_override("background_color", background_color)
+
+	# 获取视图右侧位置
+	var view_right = tool_bar.size.x
+
+	# 加入一个显示队列
+	show_tips_queue.append(tips_label)
+
+	tips_label.position = Vector2(tool_bar.size.x - 100, tool_bar.size.y + show_tips_queue.size() * 20)
+	tips_label.size = Vector2(tool_bar.size.x, 20)
+	tips_label.visible = true
+
+	tool_bar.get_parent().add_child(tips_label)
+
+	# 添加一个动画效果3秒后消失
+	var tween = create_tween()
+	tween.tween_property(tips_label, "modulate", Color(1, 1, 1, 0), 3)
+	tween.tween_callback(
+		# 从显示队列中移除，更改位置
+		func(): 
+			if show_tips_queue.size() > 0:
+				show_tips_queue.erase(tips_label)
+				tips_label.queue_free()
+				tips_label = null
+			for i in range(show_tips_queue.size()):
+				show_tips_queue[i].position = Vector2(tool_bar.size.x - 100, tool_bar.size.y + i * 20)
+	)  # Align this closing parenthesis correctly
+
+# 添加节点按钮
 func _on_add_node_pressed() -> void:
 	if debug_mode:
 		print("添加节点按钮被点击")
@@ -157,7 +381,7 @@ func _show_template_selection_dialog() -> void:
 	dialog.title = "选择节点模板"
 	dialog.ok_button_text = "确定"
 	dialog.cancel_button_text = "取消"
-	dialog.size = Vector2(400, 300)
+	dialog.size = Vector2(800, 600)
 	dialog.exclusive = true
 	
 	# 创建布局
@@ -250,16 +474,16 @@ func _show_template_selection_dialog() -> void:
 			var idx = selected_idx[0]
 			var template_id = template_manager.get_template_id_by_index(idx)
 			if template_id:
-				_create_node_from_template(template_id)
+				_create_node_from_template(template_id, true)
 			else:
-				_create_default_node()
+				printerr("没有找到模板: ", template_id)
 	)
 	
 	# 显示对话框
 	dialog.popup_centered()
 
 # 从模板创建节点
-func _create_node_from_template(template_id: String) -> void:
+func _create_node_from_template(template_id: String, redraw: bool) -> Control:
 	if debug_mode:
 		print("从模板创建节点: " + template_id)
 	
@@ -268,55 +492,22 @@ func _create_node_from_template(template_id: String) -> void:
 		print("模板不存在: " + template_id)
 		return
 	
-	# 创建基本节点
-	var autoId = 0
-	var node_id = "Node_0"
-	for i in range(1000):
-		node_id = "Node_" + str(i)
-		if nodes.has(node_id): continue
-		else:
-			autoId = i 
-			break
-	
-	var node
-	
-	# 根据模板ID创建特定类型的节点
-	if template_id == "message_node":
-		# 为消息节点加载特定的脚本
-		var MessageNodeScript = load("res://addons/node_editor_plugin/nodes/message_node.gd")
-		node = BaseNodeScene.instantiate()
-		node.set_script(MessageNodeScript)
-	else:
-		# 创建常规基本节点
-		node = create_base_node()
-	
-	node.name = node_id
-	node.set("node_id", node_id)
-	node.set("node_name", template.get("name", "新节点"))
-	node.set("node_type", template.get("type", 0))
-	node.set("inputs", template.get("inputs", []))
-	node.set("outputs", template.get("outputs", []))
-	
 	# 设置属性
+	var properties = {}
 	if template.has("properties"):
-		node.set("properties", template.get("properties", {}))
+		properties = template.get("properties", {})
+
+	# 创建基本节点
+	var node = _create_node_from_template_id(template_id)
+
+	var node_data = DataBaseNode.create_node(template_id)
+
+	var node_id = create_node_id()
+	set_node_base_property(node_id, node, node_data, template, template_id, properties)
 	
-	# 设置颜色（如果模板中有定义）
-	if template.has("color"):
-		var color_str = template.get("color", "")
-		if color_str:
-			var color_components = color_str.split(",")
-			if color_components.size() >= 3:
-				var r = float(color_components[0])
-				var g = float(color_components[1])
-				var b = float(color_components[2])
-				var a = 1.0
-				if color_components.size() > 3:
-					a = float(color_components[3])
-				
-				# 创建颜色对象
-				var custom_color = Color(r, g, b, a)
-				node.set("custom_color", custom_color)
+	# 强制更新消息节点显示
+	if node.has_method("update_message_display"):
+		node.call("update_message_display")
 	
 	# 获取节点容器的大小
 	var container_size = node_container.size
@@ -332,7 +523,7 @@ func _create_node_from_template(template_id: String) -> void:
 	var center_pos = Vector2(
 		(container_size.x - node_size.x) / 2,
 		(container_size.y - node_size.y) / 2
-	) - canvas_offset  # 减去画布偏移，使节点出现在视图中心
+	)
 	node.position = center_pos
 	node.custom_minimum_size = node_size
 	
@@ -347,336 +538,97 @@ func _create_node_from_template(template_id: String) -> void:
 		print("从模板创建节点完成: " + node_id + " 位置: " + str(node.position))
 	
 	# 触发重绘
-	queue_redraw()
+	if redraw:
+		queue_redraw()
+	return node
 
-# 创建一个默认节点
-func _create_default_node() -> void:
-	if debug_mode:
-		print("创建默认节点")
-	
-	# 创建基本节点
+
+# 生成唯一节点ID
+func create_node_id() -> String:
+	var node_id
 	var autoId = 0
-	var node_id = "Node_0"
-	for i in range(1000):
+	for i in range(1000): # 防止无限循环,默认最大1000个节点
 		node_id = "Node_" + str(i)
 		if nodes.has(node_id): continue
 		else:
-			autoId = i 
+			autoId = i
 			break
-	
-	var node = create_base_node()	
-	node.name = node_id
+	return node_id
+
+# 设置节点基础属性
+func set_node_base_property(node_id: String, node: Node, node_data: DataBaseNode,config:Dictionary, template_id:String, properties:Dictionary) -> void:
+	node.name= node_id
+
 	node.set("node_id", node_id)
-	node.set("node_name", "新节点")
-	node.set("inputs", ["输入1"])
-	node.set("outputs", ["输出1"])
-	
-	# 获取节点容器的大小
-	var container_size = node_container.size
-	# 计算节点的默认大小
-	var node_size = Vector2(200, 150)
-	# 计算中心位置，考虑节点大小的偏移
-	var center_pos = Vector2(
-		(container_size.x - node_size.x) / 2,
-		(container_size.y - node_size.y) / 2
-	)
-	node.position = center_pos
-	
-	# 添加到场景和字典
-	node_container.add_child(node)
-	nodes[node_id] = node
-	
-	# 添加到渲染队列的最前面
-	node_render_queue.push_front(node)
-	
-	if debug_mode:
-		print("默认节点已添加: " + node_id + " 位置: " + str(node.position))
-	
-	# 触发重绘
-	queue_redraw()
+	node.set("node_name", config.get("name", ""))
+	node.set("cur_test_base_node", node_data)
+	node.set("template_id", template_id)
 
-# 创建基本节点的帮助方法
-func create_base_node() -> Control:
-	var node = BaseNodeScene.instantiate()
-	# 确保节点接收输入事件
-	node.mouse_filter = Control.MOUSE_FILTER_STOP
-	return node
+	var inputs = config.get("inputs", [])
+	node.set("inputs", inputs)
 
-func _on_import_pressed() -> void:
-	print("导入按钮被点击")
-	
-	# 创建选项菜单
-	var popup = PopupMenu.new()
-	popup.add_item("导入蓝图Json文件", 0)
-	popup.add_item("导入自定义数据", 1)
-	popup.add_item("取消", 2)
-	
-	# 设置弹窗样式
-	popup.set_title("选择导入方式")
-	popup.set_size(Vector2(250, 100))
-	
-	# 直接连接信号
-	popup.connect("id_pressed", Callable(self, "_on_import_option_selected"))
-	
-	# 添加到场景树并显示
-	add_child(popup)
-	
-	# 获取导入按钮的位置并在按钮下方显示菜单
-	var import_button = $ToolBar/ImportButton
-	var global_pos = import_button.get_global_position() + Vector2(0, import_button.size.y)
-	popup.position = global_pos
-	popup.popup()
-	
-	print("导入选项菜单已显示")
+	var outputs = config.get("outputs", [])
+	node.set("outputs", outputs)
 
-# 处理导入选项选择
-func _on_import_option_selected(id: int) -> void:
-	match id:
-		0: # 导入蓝图Json文件
-			_show_import_file_dialog()
-		1: # 导入自定义数据
-			_show_custom_data_input_dialog()
-		2: # 取消
-			pass # 不做任何事情，菜单会自动关闭
+	var type_value = config.get("type", 0)
+	node.set("node_type", type_value)
 
-# 显示文件导入对话框
-func _show_import_file_dialog() -> void:
-	# 创建新的文件对话框
-	var dialog = FileDialog.new()
-	dialog.file_mode = FileDialog.FILE_MODE_OPEN_FILE
-	dialog.access = FileDialog.ACCESS_FILESYSTEM
-	dialog.title = "选择JSON文件"
-	dialog.add_filter("*.json", "JSON文件")
-	
-	# 直接连接信号
-	dialog.connect("file_selected", Callable(self, "_on_import_file_selected"))
-	
-	# 添加到场景树并显示
-	add_child(dialog)
-	dialog.popup_centered(Vector2(800, 600))
-	
-	print("导入文件对话框已显示")
+	node.set("properties", properties)
 
-# 显示自定义数据输入对话框
-func _show_custom_data_input_dialog() -> void:
-	# 创建对话框
-	var dialog = ConfirmationDialog.new()
-	dialog.title = "输入自定义JSON数据"
-	dialog.ok_button_text = "导入"
-	dialog.cancel_button_text = "取消"
-	dialog.size = Vector2(600, 500)
-	dialog.exclusive = true
-	
-	# 创建布局
-	var vbox = VBoxContainer.new()
-	vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	vbox.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	vbox.add_theme_constant_override("separation", 10)
-	
-	# 添加说明标签
-	var label = Label.new()
-	label.text = "请输入自定义JSON数据："
-	vbox.add_child(label)
-	
-	# 创建文本编辑区域
-	var text_edit = TextEdit.new()
-	text_edit.name = "JsonTextEdit"
-	text_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	text_edit.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	# 添加示例JSON数据到文本编辑器
-	text_edit.text = """
-{
-	"case_name": "示例数据",
-	"root_node": {
-		"children": [
-			{
-				"children": [
-					{
-						"children": [],
-						"input_text": "Test Input 1",
-						"node_name": "Child 1-1",
-						"node_type": "user_input"
-					}
-				],
-				"input_text": "",
-				"node_name": "Child 1",
-				"node_type": "user_input"
-			},
-			{
-				"children": [
-					{
-						"children": [],
-						"input_text": "Test Input 2",
-						"node_name": "Child 2-1",
-						"node_type": "user_input"
-					}
-				],
-				"input_text": "",
-				"node_name": "Child 2",
-				"node_type": "user_input"
-			}
-		],
-		"input_text": "",
-		"node_name": "Root",
-		"node_type": "user_input"
-	}
-}
-"""
-	text_edit.syntax_highlighter = load("res://addons/node_editor_plugin/nodes/json_syntax.gd").new() if ResourceLoader.exists("res://addons/node_editor_plugin/nodes/json_syntax.gd") else null
-	text_edit.placeholder_text = "在这里粘贴JSON数据..."
-	vbox.add_child(text_edit)
-	
-	# 添加布局到对话框
-	dialog.add_child(vbox)
-	
-	# 添加到场景树
-	add_child(dialog)
-	
-	# 连接确认信号
-	dialog.confirmed.connect(func():
-		var json_text = text_edit.text
-		if json_text.strip_edges().is_empty():
-			_show_message("请输入有效的JSON数据")
-			return
-		
-		# 解析JSON
-		var json = JSON.parse_string(json_text)
-		if json == null:
-			_show_message("JSON解析失败，请检查格式")
-			return
-		
-		# 导入自定义数据
-		_import_custom_data(json)
-	)
-	
-	# 显示对话框
-	dialog.popup_centered()
+	# 设置颜色（如果模板中有定义）
+	if config.has("color"):
+		var color_str = config.get("color", "")
+		if color_str:
+			var color_components = color_str.split(",")
+			if color_components.size() >= 3:
+				var r = float(color_components[0])
+				var g = float(color_components[1])
+				var b = float(color_components[2])
+				var a = 1.0
+				if color_components.size() > 3:
+					a = float(color_components[3])
+				
+				# 创建颜色对象
+				var custom_color = Color(r, g, b, a)
+				node.set("custom_color", custom_color)
 
-# 导入自定义数据
-func _import_custom_data(data: Dictionary) -> void:
-	if debug_mode:
-		print("开始导入自定义数据")
-	
-	# 提取蓝图名称
-	if data.has("case_name"):
-		canvas_name = data.get("case_name")
-	else:
-		canvas_name = "自定义蓝图"
-	
-	# 清除现有节点和连接
-	for node in nodes.values():
-		node.queue_free()
-	nodes.clear()
-	node_render_queue.clear()  # 清空渲染队列
-	connections.clear()
-	
-	# 更新连接线绘制器的引用
-	if connection_drawer:
-		connection_drawer.connections = connections
-		connection_drawer.nodes = nodes
-	
-	# 获取节点容器的大小
-	var container_size = node_container.size
-	# 计算中心点偏移
-	var center_offset = Vector2(container_size.x / 2, container_size.y / 2)
-	
-	# 导入根节点及其子节点
-	if data.has("root_node"):
-		var root_data = data.get("root_node")
-		_create_node_hierarchy(root_data, null, center_offset, 0)
-	
-	# 确保所有节点都重绘
-	for node in nodes.values():
-		node.queue_redraw()
-	
-	# 重绘连接线
-	if connection_drawer:
-		connection_drawer.queue_redraw()
-	
-	# 自动排列节点以获得更好的布局
-	_auto_arrange_nodes()
-	
-	if debug_mode:
-		print("自定义数据导入完成，已加载 " + str(nodes.size()) + " 个节点和 " + str(connections.size()) + " 个连接")
 
 # 创建节点层次结构
-func _create_node_hierarchy(node_data: Dictionary, parent_node, center_position: Vector2, level: int) -> Control:
+func _create_node_hierarchy(node_data: DataBaseNode, parent_node, center_position: Vector2, level: int) -> Control:
 	if debug_mode:
 		print("创建节点层次结构，层级: ", level)
 	
 	# 创建当前节点
-	var node_type = node_data.get("node_type", "")
-	var node_name = node_data.get("node_name", "节点 " + str(nodes.size()))
-	var input_text = node_data.get("input_text", "")
+	var node_type = node_data.get_node_type()
 	
-	# 生成唯一节点ID
-	var node_id = "Node_" + str(nodes.size())
-	
-	# 创建节点实例
-	var node
-	
-	# 如果是用户输入类型，使用消息节点
-	if node_type == "user_input":
-		# 加载消息节点脚本
-		var MessageNodeScript = load("res://addons/node_editor_plugin/nodes/message_node.gd")
-		node = BaseNodeScene.instantiate()
-		node.set_script(MessageNodeScript)
-	else:
-		# 创建基本节点
-		node = create_base_node()
-	
-	# 设置节点基本属性
-	node.name = node_id
-	node.set("node_id", node_id)
-	node.set("node_name", node_name)
-	
-	# 如果有父节点，创建1个输入槽；否则无输入槽
-	var inputs = []
-	if parent_node != null:
-		inputs.append("输入")
-	node.set("inputs", inputs)
-	
-	# 确保有子节点信息
-	var children = []
-	if node_data.has("children"):
-		children = node_data.get("children")
-	
-	# 设置输出槽 - 修改为只有一个输出槽
-	var outputs = []
-	# 只要有子节点就创建一个输出槽
-	if children.size() > 0:
-		outputs.append("输出")  # 只添加一个输出槽
-	node.set("outputs", outputs)
-	
-	# 设置节点类型
-	var type_value = 0
-	if node_type == "user_input":
-		type_value = 4  # 使用CUSTOM类型
-	node.set("node_type", type_value)
-	
-	# 设置消息节点的属性
-	if node_type == "user_input":
-		# 确保属性正确设置
-		var properties = {
+	var template = template_manager.get_template(node_type)
+
+	# 解析属性字典
+	var properties = {}
+	if node_data.has_message_input_text():
+		var input_text = node_data.get_input_text()
+		properties = {
 			"message": {
 				"type": "string",
 				"value": input_text
 			}
 		}
-		
-		# 输出调试信息
-		if debug_mode:
-			print("设置消息节点属性: ", node_id, " 消息内容: ", input_text)
-			
-		node.set("properties", properties)
-		
-		# 强制更新消息节点显示
-		if node.has_method("update_message_display"):
-			node.call("update_message_display")
+	
+	# 创点实例
+	var node = _create_node_from_template_id(node_type)
+
+	# 设置节点基础属性
+	var node_id = create_node_id()
+	set_node_base_property(node_id, node, node_data, template, node_type, properties)
+
+	# 强制更新消息节点显示
+	if node.has_method("update_message_display"):
+		node.call("update_message_display")
+
 	
 	# 设置节点位置
-	var horizontal_offset = 300  # 水平间距
-	var vertical_offset = 100    # 垂直间距
+	var horizontal_offset = 300 # 水平间距
+	var vertical_offset = 100 # 垂直间距
 	var x_pos = center_position.x + level * horizontal_offset
 	var y_pos = center_position.y
 	
@@ -685,13 +637,15 @@ func _create_node_hierarchy(node_data: Dictionary, parent_node, center_position:
 		y_pos += (nodes.size() % 3) * vertical_offset
 	
 	node.position = Vector2(x_pos, y_pos)
-	node.custom_minimum_size = Vector2(200, 150)  # 默认大小
+	node.custom_minimum_size = Vector2(200, 150) # 默认大小
 	
 	# 添加到场景和字典
 	node_container.add_child(node)
 	nodes[node_id] = node
 	node_render_queue.append(node)
 	
+		# 确保有子节点信息
+	var children = node_data.children
 	# 递归创建子节点
 	if children.size() > 0:
 		for i in range(children.size()):
@@ -700,7 +654,7 @@ func _create_node_hierarchy(node_data: Dictionary, parent_node, center_position:
 			# 计算子节点的位置偏移
 			var child_center = Vector2(
 				center_position.x,
-				center_position.y + (i - children.size()/2.0) * vertical_offset
+				center_position.y + (i - children.size() / 2.0) * vertical_offset
 			)
 			
 			# 递归创建子节点
@@ -711,147 +665,19 @@ func _create_node_hierarchy(node_data: Dictionary, parent_node, center_position:
 				var connection = {
 					"from_node": node_id,
 					"to_node": child_node.get("node_id"),
-					"from_slot": 0,  # 始终使用第一个输出槽(0)
-					"to_slot": 0     # 子节点的第一个输入槽
+					"from_slot": 0, # 始终使用第一个输出槽(0)
+					"to_slot": 0 # 子节点的第一个输入槽
 				}
 				connections.append(connection)
 				
 				if debug_mode:
-					print("创建连接: ", node_id, "[0] -> ", 
+					print("创建连接: ", node_id, "[0] -> ",
 						  child_node.get("node_id"), "[0]")
 	
 	if debug_mode:
 		print("节点创建完成: " + node_id + " 位置: " + str(node.position))
 	
 	return node
-
-func _on_import_file_selected(path: String) -> void:
-	if debug_mode:
-		print("导入文件: " + path)
-	
-	# 设置画布名称为文件名（不含扩展名）
-	var file_name = path.get_file().get_basename()
-	canvas_name = file_name
-	
-	# 尝试读取文件
-	var file = FileAccess.open(path, FileAccess.READ)
-	if not file:
-		push_error("无法打开文件: " + path)
-		return
-		
-	var json_text = file.get_as_text()
-	file.close()
-	print("文件内容已读取")
-	
-	# 解析JSON
-	var json = JSON.parse_string(json_text)
-	if not json:
-		push_error("JSON解析失败")
-		return
-	
-	print("JSON解析成功")
-	_load_blueprint(json)
-
-func _on_export_pressed() -> void:
-	print("导出按钮被点击")
-	
-	# 创建选项菜单
-	var popup = PopupMenu.new()
-	popup.add_item("导出蓝图Json文件", 0)
-	popup.add_item("导出自定义数据", 1)
-	popup.add_item("取消", 2)
-	
-	# 设置弹窗样式
-	popup.set_title("选择导出方式")
-	popup.set_size(Vector2(250, 100))
-	
-	# 直接连接信号
-	popup.connect("id_pressed", Callable(self, "_on_export_option_selected"))
-	
-	# 添加到场景树并显示
-	add_child(popup)
-	
-	# 获取导出按钮的位置并在按钮下方显示菜单
-	var export_button = $ToolBar/ExportButton
-	var global_pos = export_button.get_global_position() + Vector2(0, export_button.size.y)
-	popup.position = global_pos
-	popup.popup()
-	
-	print("导出选项菜单已显示")
-
-# 处理导出选项选择
-func _on_export_option_selected(id: int) -> void:
-	match id:
-		0: # 导出蓝图Json文件
-			_show_export_file_dialog()
-		1: # 导出自定义数据
-			_export_custom_data()
-		2: # 取消
-			pass # 不做任何事情，菜单会自动关闭
-
-# 显示文件导出对话框
-func _show_export_file_dialog() -> void:
-	# 创建新的文件对话框
-	var dialog = FileDialog.new()
-	dialog.file_mode = FileDialog.FILE_MODE_SAVE_FILE
-	dialog.access = FileDialog.ACCESS_FILESYSTEM
-	dialog.title = "保存为JSON文件"
-	dialog.add_filter("*.json", "JSON文件")
-	
-	# 直接连接信号
-	dialog.connect("file_selected", Callable(self, "_on_export_file_selected"))
-	
-	# 添加到场景树并显示
-	add_child(dialog)
-	dialog.popup_centered(Vector2(800, 600))
-	
-	print("导出文件对话框已显示")
-
-# 导出自定义数据
-func _export_custom_data() -> void:
-	if debug_mode:
-		print("开始导出自定义数据")
-	
-	# 检查图中是否只有消息节点
-	if !_check_only_message_nodes():
-		_show_message("导出失败：当前图中包含非消息节点，只支持导出消息节点。")
-		return
-	
-	# 查找根节点（没有输入槽或无连接的输入槽的节点）
-	var root_nodes = _find_root_nodes()
-	
-	if root_nodes.is_empty():
-		_show_message("导出失败：找不到根节点。")
-		return
-		
-	if root_nodes.size() > 1:
-		_show_message("导出失败：找到多个根节点，自定义数据格式只支持单根节点。")
-		return
-	
-	var root_node = root_nodes[0]
-	
-	# 转换为自定义数据格式
-	var custom_data = {
-		"case_name": canvas_name,
-		"root_node": _node_to_custom_data(root_node)
-	}
-	
-	# 触发信号，传递数据
-	emit_signal("export_custom_data", custom_data)
-	
-	# 创建对话框显示导出结果
-	_show_export_result_dialog(JSON.stringify(custom_data, "  "))
-
-# 检查是否所有节点都是消息节点
-func _check_only_message_nodes() -> bool:
-	for node in nodes.values():
-		var script_path = node.get_script().resource_path if node.get_script() else ""
-		if not "message_node.gd" in script_path:
-			if debug_mode:
-				print("发现非消息节点: ", node.name, " 脚本路径: ", script_path)
-			return false
-	return true
-
 # 查找根节点（没有输入槽或无连接的输入槽的节点）
 func _find_root_nodes() -> Array:
 	var root_candidates = []
@@ -904,7 +730,7 @@ func _find_root_nodes() -> Array:
 	return root_candidates
 
 # 将节点转换为自定义数据格式（递归）
-func _node_to_custom_data(node) -> Dictionary:
+func _node_to_custom_data_dict(node) -> Dictionary:
 	var node_id = node.get_meta("node_id") if node.has_meta("node_id") else node.name
 	
 	if debug_mode:
@@ -915,7 +741,7 @@ func _node_to_custom_data(node) -> Dictionary:
 		"children": [],
 		"input_text": "",
 		"node_name": "",
-		"node_type": "user_input"  # 因为我们已验证所有节点都是消息节点
+		"node_type": "user_input" # 因为我们已验证所有节点都是消息节点
 	}
 	
 	# 获取节点名称
@@ -946,214 +772,13 @@ func _node_to_custom_data(node) -> Dictionary:
 		if nodes.has(child_id):
 			var child_node = nodes[child_id]
 			# 递归处理子节点
-			var child_data = _node_to_custom_data(child_node)
+			var child_data = _node_to_custom_data_dict(child_node)
 			node_data["children"].append(child_data)
 	
 	return node_data
 
-# 显示导出结果对话框
-func _show_export_result_dialog(json_text: String) -> void:
-	# 创建对话框
-	var dialog = AcceptDialog.new()
-	dialog.title = "自定义数据导出结果"
-	dialog.ok_button_text = "关闭"
-	dialog.size = Vector2(600, 500)
-	dialog.exclusive = true
-	
-	# 创建布局
-	var vbox = VBoxContainer.new()
-	vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	vbox.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	vbox.add_theme_constant_override("separation", 10)
-	
-	# 添加说明标签
-	var label = Label.new()
-	label.text = "已成功导出为自定义数据格式（可复制以下文本）："
-	vbox.add_child(label)
-	
-	# 创建文本编辑区域
-	var text_edit = TextEdit.new()
-	text_edit.name = "JsonTextEdit"
-	text_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	text_edit.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	text_edit.text = json_text
-	text_edit.syntax_highlighter = load("res://addons/node_editor_plugin/nodes/json_syntax.gd").new() if ResourceLoader.exists("res://addons/node_editor_plugin/nodes/json_syntax.gd") else null
-	text_edit.editable = false  # 只读模式
-	vbox.add_child(text_edit)
-	
-	# 添加复制按钮
-	var copy_button = Button.new()
-	copy_button.text = "复制到剪贴板"
-	copy_button.pressed.connect(func():
-		DisplayServer.clipboard_set(json_text)
-		_show_message("已复制到剪贴板")
-	)
-	vbox.add_child(copy_button)
-	
-	# 添加布局到对话框
-	dialog.add_child(vbox)
-	
-	# 添加到场景树并显示
-	add_child(dialog)
-	dialog.popup_centered()
-	
-	if debug_mode:
-		print("导出结果对话框已显示")
 
-# 处理文件导出路径选择
-func _on_export_file_selected(path):
-	print("导出路径已选择: " + path)
-	
-	# 生成蓝图数据
-	var json = _save_blueprint()
-	
-	# 保存到文件
-	var file = FileAccess.open(path, FileAccess.WRITE)
-	if not file:
-		push_error("无法创建文件: " + path)
-		return
-		
-	file.store_string(JSON.stringify(json, "  "))
-	file.close()
-	print("蓝图已导出到: " + path)
-
-func _load_blueprint(data: Dictionary) -> void:
-	if debug_mode:
-		print("开始加载蓝图数据")
-	
-	# 清除现有节点和连接
-	for node in nodes.values():
-		node.queue_free()
-	nodes.clear()
-	node_render_queue.clear()  # 清空渲染队列
-	connections.clear()
-	
-	# 更新连接线绘制器的引用
-	if connection_drawer:
-		connection_drawer.connections = connections
-		connection_drawer.nodes = nodes
-	
-	# 获取节点容器的大小
-	var container_size = node_container.size
-	# 计算中心点偏移
-	var center_offset = Vector2(container_size.x / 2, container_size.y / 2)
-	
-	# 计算所有节点的边界框
-	var min_pos = Vector2(INF, INF)
-	var max_pos = Vector2(-INF, -INF)
-	var nodes_data = data.get("nodes", [])
-	
-	for node_data in nodes_data:
-		var pos = node_data.get("position", {})
-		var pos_x = float(pos.get("x", 0))
-		var pos_y = float(pos.get("y", 0))
-		min_pos.x = min(min_pos.x, pos_x)
-		min_pos.y = min(min_pos.y, pos_y)
-		max_pos.x = max(max_pos.x, pos_x)
-		max_pos.y = max(max_pos.y, pos_y)
-	
-	# 计算节点组的中心点
-	var nodes_center = (min_pos + max_pos) / 2 if nodes_data.size() > 0 else Vector2.ZERO
-	
-	# 创建蓝图节点的父节点
-	var blueprint = Control.new()
-	blueprint.name = "Blueprint"
-	blueprint.position = Vector2.ZERO
-	node_container.add_child(blueprint)
-	
-	# 加载节点
-	if data.has("nodes"):
-		if debug_mode:
-			print("发现节点数据: " + str(nodes_data.size()) + " 个节点")
-		
-		for node_data in nodes_data:
-			var node_id = node_data.get("id", "")
-			
-			if debug_mode:
-				print("创建节点: " + node_id)
-			
-			var node
-			
-			# 检查节点类型是否为消息节点
-			var is_message_node = false
-			if node_id.begins_with("message_node") or node_data.get("type", 0) == 4:  # 类型4是CUSTOM
-				var properties = node_data.get("properties", {})
-				if properties.has("message"):
-					is_message_node = true
-			
-			if is_message_node:
-				# 加载消息节点脚本
-				var MessageNodeScript = load("res://addons/node_editor_plugin/nodes/message_node.gd")
-				node = BaseNodeScene.instantiate()
-				node.set_script(MessageNodeScript)
-			else:
-				# 创建基本节点
-				node = create_base_node()  # 使用帮助方法
-			
-			node.name = node_id
-			
-			# 计算节点位置，使整体居中
-			var pos = node_data.get("position", {})
-			var pos_x = float(pos.get("x", 0))
-			var pos_y = float(pos.get("y", 0))
-			var relative_pos = Vector2(pos_x, pos_y) - nodes_center
-			node.position = center_offset + relative_pos
-			
-			var size_data = node_data.get("size", {})
-			var size_x = float(size_data.get("x", 200))
-			var size_y = float(size_data.get("y", 100))
-			node.custom_minimum_size = Vector2(size_x, size_y)
-			
-			# 设置节点属性
-			node.set("node_id", node_id)
-			node.set("node_name", node_data.get("name", "Unknown"))
-			node.set("node_type", int(node_data.get("type", 0)))
-			node.set("inputs", node_data.get("inputs", []))
-			node.set("outputs", node_data.get("outputs", []))
-			node.set("properties", node_data.get("properties", {}))
-			
-			blueprint.add_child(node)
-			nodes[node_id] = node
-			node_render_queue.append(node)  # 添加到渲染队列
-			
-			if debug_mode:
-				print("节点添加完成: " + node_id + ", 位置: " + str(node.position))
-	
-	# 加载连接
-	if data.has("connections"):
-		if debug_mode:
-			print("发现连接数据: " + str(data.get("connections").size()) + " 个连接")
-		connections = data.get("connections", [])
-		# 更新连接线绘制器的连接数据
-		if connection_drawer:
-			connection_drawer.connections = connections
-	
-	# 确保所有节点都重绘
-	for node in nodes.values():
-		node.queue_redraw()
-	
-	# 重绘连接线
-	if connection_drawer:
-		connection_drawer.queue_redraw()
-	
-	if debug_mode:
-		print("蓝图加载完成，已加载 " + str(nodes.size()) + " 个节点和 " + str(connections.size()) + " 个连接")
-
-func _save_blueprint() -> Dictionary:
-	var data = {
-		"nodes": [],
-		"connections": connections
-	}
-	
-	for node in nodes.values():
-		if node.has_method("get_node_data"):
-			data.nodes.append(node.get_node_data())
-	
-	return data
-
-# 只在需要重绘的时候调用queue_redraw，不需要每帧都调用
-# 移除_process函数
-
+# 重写_gui_input函数
 func _gui_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton:
 		if event.button_index == MOUSE_BUTTON_LEFT:
@@ -1164,7 +789,8 @@ func _gui_input(event: InputEvent) -> void:
 					canvas_drag_start_pos = get_global_mouse_position()
 				
 				# 点击空白区域则取消选中节点
-				print("点击空白区域")
+				if debug_mode:
+					print("点击空白区域")
 				select_node(null)
 				
 				# 确保拖拽状态被重置
@@ -1210,19 +836,18 @@ func _gui_input(event: InputEvent) -> void:
 			if not drag_started:
 				var current_pos = get_global_mouse_position()
 				var distance = current_pos.distance_to(drag_start_pos)
-				if distance > 5:  # 5像素的移动阈值
-					_start_drag(selected_node)  # 这里会设置预览矩形为可见
+				if distance > 5: # 5像素的移动阈值
+					_start_drag(selected_node) # 这里会设置预览矩形为可见
 					if debug_mode:
 						print("鼠标移动距离: ", distance, " 像素，开始拖拽")
 			
 			# 只在真正拖拽时更新预览位置
 			if drag_started:
 				_update_preview_position(get_global_mouse_position())
-				queue_redraw()  # 触发重绘
+				queue_redraw() # 触发重绘
 
 # 选中节点，将其移到渲染队列前面
 func select_node(node: Control) -> void:
-	
 	# 否发生改变
 	var lastSelected = selected_node
 	var isSelectchanged = selected_node == node
@@ -1233,7 +858,7 @@ func select_node(node: Control) -> void:
 	# 设置新的选中节点
 	selected_node = node
 	
-	if selected_node == null : return
+	if selected_node == null: return
 	
 	if selected_node.has_method("set") or selected_node.has_property("selected"):
 		selected_node.set("selected", true)
@@ -1241,7 +866,7 @@ func select_node(node: Control) -> void:
 	# 调整渲染顺序
 	if node_render_queue.has(node):
 		node_render_queue.erase(node)
-		node_render_queue.push_front(node)  # 移到队列前面
+		node_render_queue.push_front(node) # 移到队列前面
 	
 	if debug_mode:
 		print("选中节点: " + node.name)
@@ -1260,7 +885,7 @@ func deselect_node() -> void:
 	if selected_node:
 		if selected_node.has_method("set") or selected_node.has_property("selected"):
 			selected_node.set("selected", false)
-			selected_node.queue_redraw()  # 确保节点重绘更新高亮状态
+			selected_node.queue_redraw() # 确保节点重绘更新高亮状态
 		selected_node = null
 		
 		if debug_mode:
@@ -1298,85 +923,61 @@ func _get_node_at_position(global_pos: Vector2) -> Control:
 		print("未找到节点")
 	return null
 
-# 重写绘制函数，处理选中状态和拖拽预览
+# 更新画布名称
+func update_canvas_name(name: String) -> void:
+	canvas_name = name
+	var canvasNameLabel = $DebugContainer/CanvasNameLabel
+	canvasNameLabel.text = canvas_name
+
+# 重写绘制函数，绘制画布信息
 func _draw() -> void:
-	# 绘制画布信息在左上角
-	var info_text = canvas_name + " | 偏移: (" + str(int(canvas_offset.x)) + ", " + str(int(canvas_offset.y)) + ")"
-	var font = ThemeDB.fallback_font
-	var font_size = 14
-	var text_color = Color(1, 1, 1, 0.8)
-	var bg_color = Color(0.2, 0.2, 0.2, 0.7)
-	
-	# 计算文本大小
-	var text_size = font.get_string_size(info_text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size)
-	
-	# 绘制背景矩形
-	var padding = 5
-	var bg_rect = Rect2(10, 10, text_size.x + padding * 2, text_size.y + padding * 2)
-	draw_rect(bg_rect, bg_color, true)
-	draw_rect(bg_rect, Color(0.4, 0.4, 0.4, 0.8), false, 1)
-	
-	# 绘制文本
-	draw_string(font, Vector2(10 + padding, 10 + padding + text_size.y * 0.8), info_text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, text_color)
+	# 绘制背景网格
+	var grid_size = 50 # 网格大小
+	var grid_color = Color(0.8, 0.8, 0.8, 0.5) # 网格颜色，带有透明度
 
-# 修改_create_test_node函数，添加到渲染队列
-func _create_test_node():
+	# 获取当前视图的大小
+	var size = get_size()
+
+	# 计算中心位置
+	var center_x = size.x / 2
+	var center_y = size.y / 2
+
+	# 绘制水平网格线
+	for y in range(0, size.y, grid_size):
+		draw_line(Vector2(0, y), Vector2(size.x, y), grid_color)
+
+	# 绘制垂直网格线
+	for x in range(0, size.x, grid_size):
+		draw_line(Vector2(x, 0), Vector2(x, size.y), grid_color)
+
+		# 获取节点容器的大小
+	var container_size = size
+	
+	# 计算中心位置
+	var center_pos = Vector2(center_x, center_y)
+	
+	draw_circle(center_pos, 10, Color(1, 0, 0, 1))
+
+	debug_mode = $DebugContainer/DebugToggle.button_pressed
+
+	# 更新画布信息
+	var canvasInfoLabel = $DebugContainer/CanvasInfoLabel
+
 	if debug_mode:
-		print("创建测试节点")
+		var stringInfo = "";
+		stringInfo += "偏移: (" + str(int(canvas_offset.x)) + ", " + str(int(canvas_offset.y)) + ")" + " \n"
+		stringInfo += "NodeContainerPos: (" + str(int(node_container.get_global_position().x)) + ", " + str(int(node_container.get_global_position().y)) + ")"
+		canvasInfoLabel.text = stringInfo
+	else:
+		canvasInfoLabel.text = ""
 	
-	# 创建第一个节点
-	var node1 = create_base_node()
-	node1.name = "TestNode1"
-	node1.position = Vector2(200, 200)  # 左侧节点
-	node1.set("node_id", "TestNode1")
-	node1.set("node_name", "测试节点1")
-	node1.set("inputs", ["输入1"])
-	node1.set("outputs", ["输出1"])
-	node_container.add_child(node1)
-	nodes["TestNode1"] = node1
-	node_render_queue.append(node1)  # 添加到渲染队列
-	
-	# 创建第二个节点
-	var node2 = create_base_node()
-	node2.name = "TestNode2"
-	node2.position = Vector2(500, 200)  # 右侧节点
-	node2.set("node_id", "TestNode2")
-	node2.set("node_name", "测试节点2")
-	node2.set("inputs", ["输入1"])
-	node2.set("outputs", ["输出1"])
-	node_container.add_child(node2)
-	nodes["TestNode2"] = node2
-	node_render_queue.append(node2)  # 添加到渲染队列
-	
-	# 创建测试连接
-	_create_test_connection()
-	
-	if debug_mode:
-		print("测试节点和连接已创建")
-
-# 修改_create_test_connection函数，添加对connection_drawer的更新
-func _create_test_connection():
-	if nodes.size() >= 2:
-		var node_ids = nodes.keys()
-		var connection = {
-			"from_node": node_ids[0],
-			"to_node": node_ids[1],
-			"from_slot": 0,
-			"to_slot": 0
-		}
-		connections.append(connection)
-		if connection_drawer:
-			connection_drawer.queue_redraw()  # 通知连接线绘制器重绘
-		if debug_mode:
-			print("创建测试连接: ", connection)
-
 # 修改连接线绘制器类
 class ConnectionDrawer extends Control:
 	var connections: Array
 	var nodes: Dictionary
 	var debug_mode: bool = true
-	var editor_view = null  # 引用到编辑器视图
-	var _real_time_update: bool = false  # 是否进行实时更新
+	var editor_view = null # 引用到编辑器视图
+	var _real_time_update: bool = false # 是否进行实时更新
 	
 	func _init(view = null):
 		editor_view = view
@@ -1428,8 +1029,8 @@ class ConnectionDrawer extends Control:
 							# 直接计算槽位置（不应该走这个分支，仅作为后备）
 							var slot_height = 25
 							var y_offset = 40
-							from_pos = from_node.position + Vector2(from_node.size.x, y_offset + from_slot_idx * slot_height + slot_height/2)
-							to_pos = to_node.position + Vector2(0, y_offset + to_slot_idx * slot_height + slot_height/2)
+							from_pos = from_node.position + Vector2(from_node.size.x, y_offset + from_slot_idx * slot_height + slot_height / 2)
+							to_pos = to_node.position + Vector2(0, y_offset + to_slot_idx * slot_height + slot_height / 2)
 						
 						# 绘制连接线
 						_draw_bezier_connection(from_pos, to_pos, Color(0.2, 0.6, 1.0))
@@ -1457,8 +1058,8 @@ class ConnectionDrawer extends Control:
 					var slot_pos = editor_view._get_slot_position(target_node, target_is_output, target_slot_idx)
 					
 					# 绘制高亮槽点
-					draw_circle(slot_pos, 8, Color(1.0, 0.8, 0.2, 0.7))  # 黄色高亮圆圈
-					draw_circle(slot_pos, 6, Color(1.0, 1.0, 0.0, 0.9))  # 亮黄色内圈
+					draw_circle(slot_pos, 8, Color(1.0, 0.8, 0.2, 0.7)) # 黄色高亮圆圈
+					draw_circle(slot_pos, 6, Color(1.0, 1.0, 0.0, 0.9)) # 亮黄色内圈
 					
 					# 绘制临时连接线到槽点
 					_draw_bezier_connection(start_pos, slot_pos, Color(1.0, 0.8, 0.2, 0.8), true)
@@ -1491,7 +1092,7 @@ class ConnectionDrawer extends Control:
 				
 			# 然后绘制虚线效果
 			for i in range(points.size() - 1):
-				if i % 2 == 0:  # 仅绘制偶数段，创建虚线效果
+				if i % 2 == 0: # 仅绘制偶数段，创建虚线效果
 					draw_line(points[i], points[i + 1], color, 3.0)
 		else:
 			# 常规连接线
@@ -1522,7 +1123,8 @@ func _on_node_gui_input(event: InputEvent, source_node: Control) -> void:
 	if event is InputEventMouseButton:
 		if event.button_index == MOUSE_BUTTON_LEFT:
 			if event.pressed:
-				print("节点 " + source_node.name + " 被点击")
+				if debug_mode:
+					print("节点 " + source_node.name + " 被点击")
 				
 				# 单击只选中节点
 				select_node(source_node)
@@ -1550,15 +1152,15 @@ func _on_node_gui_input(event: InputEvent, source_node: Control) -> void:
 			if not drag_started:
 				var current_pos = get_global_mouse_position()
 				var distance = current_pos.distance_to(drag_start_pos)
-				if distance > 5:  # 5像素的移动阈值
-					_start_drag(source_node)  # 开始真正的拖拽
+				if distance > 5: # 5像素的移动阈值
+					_start_drag(source_node) # 开始真正的拖拽
 					if debug_mode:
 						print("鼠标移动距离: ", distance, " 像素，开始拖拽")
 			
 			# 只在真正拖拽时更新预览位置
 			if drag_started:
 				_update_preview_position(get_global_mouse_position())
-				queue_redraw()  # 触发重绘
+				queue_redraw() # 触发重绘
 
 # 开始拖拽，创建预览矩形
 func _start_drag(node: Control) -> void:
@@ -1576,8 +1178,8 @@ func _start_drag(node: Control) -> void:
 	preview_control.visible = true
 	preview_control.size = node.size
 	preview_control.position = node.position
-	preview_control.node_ref = node  # 添加对正在拖拽节点的引用
-	preview_control.queue_redraw()  # 确保绘制预览矩形
+	preview_control.node_ref = node # 添加对正在拖拽节点的引用
+	preview_control.queue_redraw() # 确保绘制预览矩形
 	
 	# 通知连接线绘制器需要实时更新连接线
 	if connection_drawer:
@@ -1659,7 +1261,7 @@ class PreviewRect extends Control:
 		
 		# 绘制虚线边框 - 增加对比度
 		_draw_dashed_rect(rect, Color(1, 1, 1, 0.9), 1.5, 4)
-		_draw_dashed_rect(rect.grow(-2), Color(0, 0, 0, 0.7), 1.5, 4)  # 添加内部黑色虚线增加对比度
+		_draw_dashed_rect(rect.grow(-2), Color(0, 0, 0, 0.7), 1.5, 4) # 添加内部黑色虚线增加对比度
 	
 	# 绘制虚线矩形 - 更高效的实现
 	func _draw_dashed_rect(rect: Rect2, color: Color, width: float, dash_length: int):
@@ -1727,12 +1329,61 @@ func _on_delete_node_pressed() -> void:
 	if debug_mode:
 		print("准备删除节点: " + node_id)
 	
-	# 找到并删除与该节点相关的所有连接
-	var connections_to_remove = []
+	# 找到与该节点相关的所有连接
+	var incoming_connections = [] # 指向该节点的连接
+	var outgoing_connections = [] # 从该节点出发的连接
+	var connections_to_remove = [] # 需要删除的连接
+	
 	for connection in connections:
-		if connection["from_node"] == node_id or connection["to_node"] == node_id:
+		if connection["from_node"] == node_id:
+			outgoing_connections.append(connection)
+			connections_to_remove.append(connection)
+		elif connection["to_node"] == node_id:
+			incoming_connections.append(connection)
 			connections_to_remove.append(connection)
 	
+	# 获取当前节点的 TestBaseNode
+	var current_test_node = selected_node.get("cur_test_base_node")
+	
+	# 如果是中间节点（既有输入又有输出）
+	if !incoming_connections.is_empty() and !outgoing_connections.is_empty():
+		# 对于每个父节点
+		for incoming in incoming_connections:
+			var parent_node = nodes[incoming["from_node"]]
+			var parent_test_node = parent_node.get("cur_test_base_node")
+			var parent_slot_idx = incoming["from_slot"]
+			
+			# 对于每个子节点
+			for outgoing in outgoing_connections:
+				var child_node = nodes[outgoing["to_node"]]
+				var child_test_node = child_node.get("cur_test_base_node")
+				
+				# 创建从父节点到子节点的新连接
+				var new_connection = {
+					"from_node": incoming["from_node"],
+					"to_node": outgoing["to_node"],
+					"from_slot": incoming["from_slot"],
+					"to_slot": outgoing["to_slot"]
+				}
+				
+				# 更新父节点的 children 数组
+				if parent_test_node and parent_slot_idx < parent_test_node.children.size():
+					parent_test_node.children[parent_slot_idx] = child_test_node
+				
+				connections.append(new_connection)
+	
+	# 如果是最后一个节点（只有输入，没有输出）
+	elif !incoming_connections.is_empty() and outgoing_connections.is_empty():
+		for incoming in incoming_connections:
+			var parent_node = nodes[incoming["from_node"]]
+			var parent_test_node = parent_node.get("cur_test_base_node")
+			var parent_slot_idx = incoming["from_slot"]
+			
+			# 更新父节点的 children 数组，将对应位置设为 null
+			if parent_test_node and parent_slot_idx < parent_test_node.children.size():
+				parent_test_node.children.remove_at(parent_slot_idx)
+	
+	# 删除所有需要移除的连接
 	for connection in connections_to_remove:
 		connections.erase(connection)
 	
@@ -1793,8 +1444,8 @@ func _on_node_slot_pressed(node: Control, is_output: bool, slot_idx: int) -> voi
 		connection_drawer.queue_redraw()
 	
 	# 更新视图状态
-	Input.set_mouse_mode(Input.MOUSE_MODE_HIDDEN)  # 可选：隐藏鼠标指针
-	get_viewport().set_input_as_handled()  # 标记事件已处理
+	Input.set_mouse_mode(Input.MOUSE_MODE_HIDDEN) # 可选：隐藏鼠标指针
+	get_viewport().set_input_as_handled() # 标记事件已处理
 
 # 处理全局的鼠标移动以更新连接线预览
 func _input(event: InputEvent) -> void:
@@ -1891,15 +1542,15 @@ func _try_connect_to_nearest_slot() -> bool:
 	
 	# 根据起始槽类型查找合适的目标槽
 	if connection_start_is_output:
-		target_slot = _find_slot_near_position(connection_end_pos, true, false)  # 只查找输入槽
+		target_slot = _find_slot_near_position(connection_end_pos, true, false) # 只查找输入槽
 	else:
-		target_slot = _find_slot_near_position(connection_end_pos, false, true)  # 只查找输出槽
+		target_slot = _find_slot_near_position(connection_end_pos, false, true) # 只查找输出槽
 	
 	# 有附近的槽点且可以建立连接
 	if !target_slot.is_empty():
 		if debug_mode:
-			print("释放鼠标时找到附近槽点: ", target_slot.node.name, 
-				  " ", "输出槽" if target_slot.is_output else "输入槽", 
+			print("释放鼠标时找到附近槽点: ", target_slot.node.name,
+				  " ", "输出槽" if target_slot.is_output else "输入槽",
 				  " 索引:", target_slot.index)
 		
 		# 确保连接类型正确(从输出到输入)
@@ -1934,6 +1585,33 @@ func _create_connection(from_node: Control, from_slot: int, to_node: Control, to
 		"from_slot": from_slot,
 		"to_slot": to_slot
 	}
+	
+	# 处理父子级关系
+	# 获取父节点和子节点
+	var parent_node = from_node
+	var child_node = to_node
+	
+	var parent_test_node = parent_node.get("cur_test_base_node")
+	var child_test_node = child_node.get("cur_test_base_node")
+	if parent_test_node == null:
+		printerr("父数据没有设置")
+		return
+	if child_test_node == null:
+		printerr("子数据没有设置")
+		return
+	
+	# 根据输出槽索引确定在children列表中的位置
+	var insert_index = from_slot
+	
+	# 确保children列表足够长
+	while parent_test_node.children.size() <= insert_index:
+		parent_test_node.children.append(null)
+	
+	# 在指定位置插入子节点
+	parent_test_node.children[insert_index] = child_node.get("cur_test_base_node")
+	
+	if debug_mode:
+		print("建立父子关系: ", parent_node.get("node_id"), " -> ", child_node.get("node_id"), " 位置: ", insert_index)
 	
 	connections.append(connection)
 	
@@ -1991,7 +1669,7 @@ func _show_connection_context_menu(connection_idx: int, global_pos: Vector2) -> 
 
 # 处理连接线菜单选择
 func _on_connection_menu_item_selected(id: int, connection_idx: int) -> void:
-	if id == 0:  # 删除连接
+	if id == 0: # 删除连接
 		_delete_connection(connection_idx)
 
 # 删除指定索引的连接
@@ -2027,7 +1705,7 @@ func _get_highlighted_slot() -> Dictionary:
 func _get_slot_position(node: Control, is_output: bool, slot_idx: int) -> Vector2:
 	var slot_height = 25
 	var y_offset = 40
-	var slot_y = y_offset + slot_idx * slot_height + slot_height/2
+	var slot_y = y_offset + slot_idx * slot_height + slot_height / 2
 	
 	# 注意：我们不在这里加上画布偏移量，因为节点的位置已经包含了这个偏移
 	if is_output:
@@ -2083,16 +1761,14 @@ func _find_slot_near_position(pos: Vector2, find_inputs: bool, find_outputs: boo
 					}
 	
 	if debug_mode and !closest_slot.is_empty():
-		print("找到最近的槽点：", closest_slot.node.name, 
-			  " ", "输出槽" if closest_slot.is_output else "输入槽", 
+		print("找到最近的槽点：", closest_slot.node.name,
+			  " ", "输出槽" if closest_slot.is_output else "输入槽",
 			  " 索引:", closest_slot.index, " 距离:", closest_slot.distance)
 	
 	return closest_slot
 
 # 获取指定位置的连接线索引
 func _get_connection_at_position(pos: Vector2) -> int:
-	var tolerance = 10.0  # 点击容差范围
-	
 	# 这里pos已经是相对于NodeContainer的位置
 	var adjusted_pos = pos
 	
@@ -2122,7 +1798,7 @@ func _get_connection_at_position(pos: Vector2) -> int:
 			var to_pos = _get_slot_position(to_node, false, to_slot_idx)
 			
 			# 检查鼠标点击位置是否在连接线上
-			if _is_point_on_connection(adjusted_pos, from_pos, to_pos, tolerance):
+			if _is_point_on_connection(adjusted_pos, from_pos, to_pos, click_line_tolerance):
 				if debug_mode:
 					print("找到连接线：", i)
 				return i
@@ -2136,7 +1812,7 @@ func _is_point_on_connection(point: Vector2, from: Vector2, to: Vector2, toleran
 	var segment = to - from
 	var length = segment.length()
 	
-	if length < 0.0001:  # 防止线段长度为0导致的除零错误
+	if length < 0.0001: # 防止线段长度为0导致的除零错误
 		return point.distance_to(from) < tolerance
 	
 	# 线段向量的单位向量
@@ -2176,9 +1852,19 @@ func _auto_arrange_nodes() -> void:
 	if debug_mode:
 		print("开始自动排列节点")
 	
+	# 计算每个节点的最小高度
+	var node_min_heights = {}
+	for node_id in nodes:
+		var node = nodes[node_id]
+		node_min_heights[node_id] = node.calculate_min_height()
+		# 修复每个节点的最小高度
+		if node_min_heights[node_id] > node.size.y:
+			node.set_node_size(Vector2(node.size.x, node_min_heights[node_id]))
+
+
 	# 第一步：分析节点间的连接关系，构建有向图
-	var graph = {}  # 存储节点的连接关系
-	var in_degree = {}  # 存储每个节点的入度（指向该节点的连接数量）
+	var graph = {} # 存储节点的连接关系
+	var in_degree = {} # 存储每个节点的入度（指向该节点的连接数量）
 	
 	# 初始化图数据结构
 	for node_id in nodes:
@@ -2195,8 +1881,8 @@ func _auto_arrange_nodes() -> void:
 			in_degree[to_node] += 1
 	
 	# 第二步：使用拓扑排序确定节点的层级（列）
-	var layers = []  # 每一层的节点
-	var current_layer = []  # 当前层的节点
+	var layers = [] # 每一层的节点
+	var current_layer = [] # 当前层的节点
 	
 	# 找出入度为0的节点作为第一层
 	for node_id in in_degree:
@@ -2242,15 +1928,15 @@ func _auto_arrange_nodes() -> void:
 	if debug_mode:
 		print("节点分层完成，共 ", layers.size(), " 层")
 		for i in range(layers.size()):
-			print("第 ", i+1, " 层节点: ", layers[i])
+			print("第 ", i + 1, " 层节点: ", layers[i])
 	
 	# 第三步：计算每一层节点的位置
-	var node_positions = {}  # 存储每个节点的新位置
-	var layer_x_positions = []  # 每层的x位置
-	var horizontal_spacing = 300  # 层间水平间距
+	var node_positions = {} # 存储每个节点的新位置
+	var layer_x_positions = [] # 每层的x位置
+	var horizontal_spacing = 300 # 层间水平间距
 	
 	# 计算每层的x位置
-	var current_x = 50  # 起始x位置
+	var current_x = 100 # 起始x位置
 	for i in range(layers.size()):
 		layer_x_positions.append(current_x)
 		
@@ -2264,12 +1950,12 @@ func _auto_arrange_nodes() -> void:
 		current_x += max_width + horizontal_spacing
 	
 	# 第四步：优化每层内节点的垂直位置，减少交叉线
-	var vertical_spacing = 50  # 节点垂直间距
+	var vertical_spacing = 100 # 节点垂直间距
 	
 	for i in range(layers.size()):
 		var layer = layers[i]
 		var layer_x = layer_x_positions[i]
-		var current_y = 50  # 每层起始y位置
+		var current_y = 100 # 每层起始y位置
 		
 		# 简单排序：如果是第一层，直接排列；否则基于连接关系排序
 		if i > 0:
@@ -2285,12 +1971,12 @@ func _auto_arrange_nodes() -> void:
 					var to_node = connection.get("to_node", "")
 					
 					# 如果当前节点是接收端
-					if to_node == node_id and layers[i-1].has(from_node):
+					if to_node == node_id and layers[i - 1].has(from_node):
 						if node_positions.has(from_node):
 							node_scores[node_id] += node_positions[from_node].y
 							connected_count += 1
 					# 如果当前节点是发送端
-					elif from_node == node_id and layers[i-1].has(to_node):
+					elif from_node == node_id and layers[i - 1].has(to_node):
 						if node_positions.has(to_node):
 							node_scores[node_id] += node_positions[to_node].y
 							connected_count += 1
@@ -2299,7 +1985,7 @@ func _auto_arrange_nodes() -> void:
 				if connected_count > 0:
 					node_scores[node_id] /= connected_count
 				else:
-					node_scores[node_id] = current_y  # 默认位置
+					node_scores[node_id] = current_y # 默认位置
 			
 			# 根据得分排序节点
 			layer.sort_custom(func(a, b): return node_scores[a] < node_scores[b])

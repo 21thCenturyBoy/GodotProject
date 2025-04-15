@@ -10,7 +10,7 @@ var editor_margin: Vector2 = Vector2(10, 10) # 编辑器边距
 func _init():
 	super._init()
 	debug_mode = false
-	node_type = NodeType.CUSTOM
+	node_type = NodeType.USER_INPUT
 
 # 重写_ready方法
 func _ready():

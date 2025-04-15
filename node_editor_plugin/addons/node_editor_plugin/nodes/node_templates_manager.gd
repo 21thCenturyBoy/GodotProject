@@ -9,6 +9,7 @@ const TEMPLATES_PATH = "res://addons/node_editor_plugin/nodes/templates"
 # 存储加载的模板
 var templates: Dictionary = {}
 
+
 # 初始化时加载所有模板
 func _init():
 	_load_templates()

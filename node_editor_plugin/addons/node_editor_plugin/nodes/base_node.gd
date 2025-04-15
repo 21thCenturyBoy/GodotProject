@@ -1,18 +1,18 @@
 @tool
 extends Control
 
+class_name ViewBaseNode
+
 # 节点类型枚举
 enum NodeType {
-	INPUT,
-	OUTPUT,
-	PROCESS,
-	CONDITION,
-	CUSTOM
+	DEFAULT,
+	USER_INPUT,
 }
 
 # 节点属性
+var template_id: String = ""
 var node_id: String = ""
-var node_type: int = NodeType.PROCESS  # 改为int类型以便兼容JSON
+var node_type: int = NodeType.DEFAULT  # 改为int类型以便兼容JSON
 var node_name: String = "未命名"
 var node_pos: Vector2 = Vector2.ZERO  # 改名为node_pos
 var node_size: Vector2 = Vector2(200, 100)  # 改名为node_size
@@ -21,6 +21,7 @@ var outputs: Array = [] # 移除严格类型以兼容JSON导入
 var properties: Dictionary = {}
 var selected: bool = false  # 添加选中状态属性
 var custom_color: Color = Color.TRANSPARENT  # 添加自定义颜色属性
+var cur_test_base_node :DataBaseNode
 
 # 调试标志
 var debug_mode: bool = false
@@ -31,19 +32,24 @@ var resize_handle_rect: Rect2
 var resize_handle_height: int = 10
 var min_node_size: Vector2 = Vector2(150, 80)
 
+# 槽参数
+var slot_height: int = 25
+var slot_offset: int = 40 # 槽垂直偏移量
+var slot_name_pos: Vector2 = Vector2(15, 16)
+
+# 颜色定义字典
+static var bg_colors = {
+	"default": Color(0.2, 0.4, 0.6),
+	"functioncalling_failed": Color(0.5, 0.3, 0.3),
+	"functioncalling_success": Color(0.6, 0.4, 0.2),
+	"return_message": Color(0.3, 0.3, 0.5),
+	"user_input": Color(0.3, 0.5, 0.3),
+}
 # 信号
 signal connection_started(from_slot: Control, to_slot: Control)
 signal connection_ended(from_slot: Control, to_slot: Control)
 signal property_changed(property_name: String, value: Variant)
 
-# 颜色定义
-var bg_colors = [
-	Color(0.2, 0.4, 0.6),  # INPUT
-	Color(0.6, 0.4, 0.2),  # OUTPUT
-	Color(0.3, 0.3, 0.5),  # PROCESS
-	Color(0.5, 0.3, 0.3),  # CONDITION
-	Color(0.3, 0.5, 0.3)   # CUSTOM
-]
 
 # 初始化函数
 func _init():
@@ -75,6 +81,9 @@ func _set(property: StringName, value) -> bool:
 	if debug_mode:
 		print("设置属性: " + str(property) + " = " + str(value))
 	match property:
+		"template_id":
+			template_id = value
+			return true
 		"node_id":
 			node_id = value
 			return true
@@ -112,11 +121,16 @@ func _set(property: StringName, value) -> bool:
 		"custom_color":
 			custom_color = value
 			return true
+		"cur_test_base_node":
+			cur_test_base_node = value
+			return true
 	return false
 
 # 获取节点属性的方法，用于动态获取属性
 func _get(property: StringName):
 	match property:
+		"template_id":
+			return template_id
 		"node_id":
 			return node_id
 		"node_name":
@@ -136,12 +150,19 @@ func _get(property: StringName):
 		"selected":
 			return selected
 		"custom_color":
-			return custom_color
+			return custom_color	
+		"cur_test_base_node":
+			return cur_test_base_node
 	return null
 
 # 获取属性列表，用于编辑器和脚本交互
 func _get_property_list() -> Array:
 	var props = [
+		{
+			"name": "template_id",
+			"type": TYPE_STRING,
+			"usage": PROPERTY_USAGE_SCRIPT_VARIABLE
+		},
 		{
 			"name": "node_id",
 			"type": TYPE_STRING,
@@ -191,7 +212,12 @@ func _get_property_list() -> Array:
 			"name": "custom_color",
 			"type": TYPE_COLOR,
 			"usage": PROPERTY_USAGE_SCRIPT_VARIABLE
-		}
+		},
+		{
+			"name": "cur_test_base_node",
+			"type": TYPE_OBJECT,
+			"usage": PROPERTY_USAGE_SCRIPT_VARIABLE
+		},
 	]
 	return props
 
@@ -200,7 +226,6 @@ func add_input_slot(name: String, type: int) -> void:
 	inputs.append({
 		"name": name,
 		"type": type,
-		"connections": []
 	})
 	queue_redraw()
 
@@ -209,7 +234,6 @@ func add_output_slot(name: String, type: int) -> void:
 	outputs.append({
 		"name": name,
 		"type": type,
-		"connections": []
 	})
 	queue_redraw()
 
@@ -226,6 +250,7 @@ func get_node_data() -> Dictionary:
 		"id": node_id,
 		"type": node_type,
 		"name": node_name,
+		"template_id": template_id,
 		"position": {"x": position.x, "y": position.y},
 		"size": {"x": custom_minimum_size.x, "y": custom_minimum_size.y},
 		"inputs": inputs,
@@ -246,7 +271,7 @@ func _draw() -> void:
 		print("绘制节点: " + node_name + ", ID: " + node_id)
 	
 	# 选择背景颜色
-	var bg_color = bg_colors[node_type] if node_type < bg_colors.size() else Color(0.3, 0.3, 0.3)
+	var bg_color = bg_colors[template_id] if bg_colors.has(template_id) else bg_colors["default"]
 	
 	# 如果有自定义颜色，则使用自定义颜色
 	if custom_color != Color.TRANSPARENT:
@@ -286,39 +311,37 @@ func _draw() -> void:
 
 # 绘制输入和输出槽
 func _draw_slots() -> void:
-	var slot_height = 25
-	var y_offset = 40
 	
 	# 绘制输入槽
 	if debug_mode:
 		print("绘制输入槽: " + str(inputs.size()))
 	for i in range(inputs.size()):
 		var input = inputs[i]
-		var slot_y = y_offset + i * slot_height
+		var slot_y = slot_offset + i * slot_height
 		var slot_pos = Vector2(0, slot_y)
 		
 		# 绘制输入槽背景
-		var slot_rect = Rect2(slot_pos, Vector2(10, slot_height))
-		draw_rect(slot_rect, Color(0.1, 0.5, 0.1), true)
+		# var slot_rect = Rect2(slot_pos, Vector2(10, slot_height))
+		# draw_rect(slot_rect, Color(0.1, 0.5, 0.1), true)
 		
 		# 绘制输入槽连接点
 		draw_circle(Vector2(5, slot_y + slot_height/2), 5, Color(0, 1, 0))
 		
 		# 绘制输入槽名称
 		if input is Dictionary and input.has("name"):
-			draw_string(ThemeDB.fallback_font, Vector2(15, slot_y + 16), input.name, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color.WHITE)
+			draw_string(ThemeDB.fallback_font, Vector2(slot_name_pos.x, slot_y + slot_name_pos.y), input.name, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color.WHITE)
 	
 	# 绘制输出槽
 	if debug_mode:
 		print("绘制输出槽: " + str(outputs.size()))
 	for i in range(outputs.size()):
 		var output = outputs[i]
-		var slot_y = y_offset + i * slot_height
+		var slot_y = slot_offset + i * slot_height
 		var slot_pos = Vector2(size.x - 10, slot_y)
 		
 		# 绘制输出槽背景
-		var slot_rect = Rect2(Vector2(size.x - 10, slot_y), Vector2(10, slot_height))
-		draw_rect(slot_rect, Color(0.5, 0.1, 0.1), true)
+		# var slot_rect = Rect2(Vector2(size.x - 10, slot_y), Vector2(10, slot_height))
+		# draw_rect(slot_rect, Color(0.5, 0.1, 0.1), true)
 		
 		# 绘制输出槽连接点
 		draw_circle(Vector2(size.x - 5, slot_y + slot_height/2), 5, Color(1, 0, 0))
@@ -326,7 +349,7 @@ func _draw_slots() -> void:
 		# 绘制输出槽名称
 		if output is Dictionary and output.has("name"):
 			var text_size = ThemeDB.fallback_font.get_string_size(output.name, HORIZONTAL_ALIGNMENT_LEFT, -1, 12)
-			draw_string(ThemeDB.fallback_font, Vector2(size.x - 15 - text_size.x, slot_y + 16), output.name, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color.WHITE) 
+			draw_string(ThemeDB.fallback_font, Vector2(size.x - slot_name_pos.x - text_size.x, slot_y + slot_name_pos.y), output.name, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color.WHITE) 
 
 # 添加输入处理函数，将事件转发给父节点
 func _gui_input(event: InputEvent) -> void:
@@ -401,12 +424,10 @@ func _gui_input(event: InputEvent) -> void:
 
 # 获取鼠标位置处的槽信息
 func _get_slot_at_position(pos: Vector2) -> Dictionary:
-	var slot_height = 25
-	var y_offset = 40
 	
 	# 检查输入槽
 	for i in range(inputs.size()):
-		var slot_y = y_offset + i * slot_height
+		var slot_y = slot_offset + i * slot_height
 		# 输入槽的点击区域
 		var slot_rect = Rect2(0, slot_y, 15, slot_height)
 		if slot_rect.has_point(pos):
@@ -418,7 +439,7 @@ func _get_slot_at_position(pos: Vector2) -> Dictionary:
 	
 	# 检查输出槽
 	for i in range(outputs.size()):
-		var slot_y = y_offset + i * slot_height
+		var slot_y = slot_offset + i * slot_height
 		# 输出槽的点击区域
 		var slot_rect = Rect2(size.x - 15, slot_y, 15, slot_height)
 		if slot_rect.has_point(pos):
@@ -467,12 +488,8 @@ func _handle_resize(relative: Vector2) -> void:
 	new_size.y = max(new_size.y, min_node_size.y)
 	new_size.x = max(new_size.x, min_node_size.x)
 	
-	custom_minimum_size = new_size
-	node_size = new_size
-	
 	# 触发大小变更通知
-	size = new_size
-	queue_redraw()
+	set_node_size(new_size)
 
 # 绘制调整大小把手
 func _draw_resize_handle() -> void:
@@ -497,3 +514,34 @@ func _draw_resize_handle() -> void:
 			Color(1, 1, 1, 0.7),
 			1.0
 		) 
+
+# 计算节点最小高度（虚方法）
+func calculate_min_height() -> float:
+	var best_height = 0
+	# 计算输入槽高度
+	var max_input_slot_height = 0
+	max_input_slot_height = inputs.size() * (slot_height +slot_offset)
+	# 计算输出槽高度
+	var max_output_slot_height = 0
+	max_output_slot_height = outputs.size() * (slot_height +slot_offset)
+	# 取最大值
+	best_height += max(max_input_slot_height, max_output_slot_height)
+	# 加上标题高度
+	best_height += 30
+	# 加上调整大小把手高度
+	best_height += resize_handle_height
+	return best_height
+
+# 设置节点大小
+func set_node_size(new_size: Vector2) -> void:
+	node_size = new_size
+	custom_minimum_size = new_size
+
+	# 触发大小变更通知
+	size = new_size
+
+	queue_redraw()
+
+# 获取节点大小
+func get_node_size() -> Vector2:
+	return node_size

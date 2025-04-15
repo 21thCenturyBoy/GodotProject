@@ -8,6 +8,8 @@ var node_editor_plugin_instance = null
 # 节点编辑器视图实例
 var editor_view = null
 
+const CustomData = preload("res://addons/node_editor_plugin/node_editor_view.gd").CustomData
+
 func _enter_tree() -> void:
 	# 创建启动器面板
 	launcher_dock = preload("res://addons/plugin_launcher/launcher_dock.tscn").instantiate()
@@ -46,56 +48,43 @@ func _on_launch_node_editor() -> void:
 		if editor_view:
 			_connect_to_editor_view()
 			
-			# 测试模拟传入
-			_testLoad()
+		# 测试模拟传入
+		# 获取编辑器视图并传递JSON数据
+		var root_node = DataBaseNode.create_node("user_input")
+		root_node.node_name = "Root"
+		root_node.input_text = "测试输入"
+		root_node.children = []
+
+		var child_node = DataBaseNode.create_node("user_input")
+		child_node.node_name = "Child 1"
+		child_node.input_text = "测试输入1"
+		child_node.children = []
+		root_node.children.append(child_node)
+
+		var child_node2 = DataBaseNode.create_node("user_input")
+		child_node2.node_name = "Child 2"
+		child_node2.input_text = "测试输入2"
+		child_node2.children = []
+		root_node.children.append(child_node2)
+
+		var data = CustomData.new()
+		data.module_name = "test_module_name"
+		data.tool_name = "test_tool_name"
+		data.case_name = "test_case_name"
+		data.root_node = root_node
+
+		
+		if editor_view and editor_view.has_method("_import_custom_data"):
+			# 传入解析后的字典数据，而不是原始字符串
+			editor_view._import_custom_data(data)
+			print("成功：JSON数据已加载到节点编辑器")
+		else:
+			print("错误：无法找到节点编辑器视图或导入方法")
 		print("成功：节点编辑器已启动")
 		return
 	
 	print("错误：无法启动节点编辑器插件")
-
-func _testLoad() -> void:
-	# -----------------模拟传入符串...-----------------
-	var text = """
-{
-	"case_name": "示例数据",
-	"root_node": {
-		"children": [
-			{
-				"children": [
-					{
-						"children": [],
-						"input_text": "Test Input 1",
-						"node_name": "Child 1-1",
-						"node_type": "user_input"
-					}
-				],
-				"input_text": "",
-				"node_name": "Child 1",
-				"node_type": "user_input"
-			},
-			{
-				"children": [
-					{
-						"children": [],
-						"input_text": "Test Input 2",
-						"node_name": "Child 2-1",
-						"node_type": "user_input"
-					}
-				],
-				"input_text": "",
-				"node_name": "Child 2",
-				"node_type": "user_input"
-			}
-		],
-		"input_text": "",
-		"node_name": "Root",
-		"node_type": "user_input"
-	}
-}
-"""
-	_on_load_json_data(text)
 # -----------------模拟传入符串...-----------------
-
 
 
 # 将JSON数据传递给节点编辑器
@@ -130,13 +119,7 @@ func _on_load_json_data(json_string: String) -> void:
 		print("错误：JSON数据不是有效的字典格式")
 		return
 	
-	# 获取编辑器视图并传递JSON数据
-	if editor_view and editor_view.has_method("_import_custom_data"):
-		# 传入解析后的字典数据，而不是原始字符串
-		editor_view._import_custom_data(json_data)
-		print("成功：JSON数据已加载到节点编辑器")
-	else:
-		print("错误：无法找到节点编辑器视图或导入方法")
+
 
 # 查找节点编辑器视图
 func _find_editor_view() -> Control:
@@ -149,34 +132,10 @@ func _find_editor_view() -> Control:
 func _connect_to_editor_view() -> void:
 	if not editor_view:
 		return
-		
-	# 检查编辑器视图是否有导出自定义数据的信号
-	if editor_view.has_signal("export_custom_data"):
-		# 确保不会重复连接
-		if not editor_view.is_connected("export_custom_data", _on_editor_export_custom_data):
-			editor_view.connect("export_custom_data", _on_editor_export_custom_data)
-			print("成功：已连接到节点编辑器的导出自定义数据信号")
-	else:
-		print("警告：节点编辑器视图没有export_custom_data信号")
+	
 
 # 断开与节点编辑器视图的信号连接
 func _disconnect_from_editor_view() -> void:
 	if not editor_view:
 		return
-		
-	if editor_view.has_signal("export_custom_data") and editor_view.is_connected("export_custom_data", _on_editor_export_custom_data):
-		editor_view.disconnect("export_custom_data", _on_editor_export_custom_data)
 
-# 当节点编辑器导出自定义数据时的回调
-func _on_editor_export_custom_data(custom_data: Dictionary) -> void:
-	print("收到节点编辑器导出的自定义数据")
-	
-	# 将字典转换为JSON字符串
-	var json_text = JSON.stringify(custom_data, "  ")
-	
-	# 更新JsonTextEdit的内容
-	if launcher_dock and launcher_dock.has_method("update_json_text"):
-		launcher_dock.update_json_text(json_text)
-		print("成功：已更新JSON文本框")
-	else:
-		print("错误：无法更新JSON文本框")
