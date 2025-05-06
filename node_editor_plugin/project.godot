@@ -12,9 +12,13 @@ config_version=5
 
 config/name="node_editor_plugin"
 run/main_scene="uid://cswb4nroyejhe"
-config/features=PackedStringArray("4.5", "Forward Plus")
+config/features=PackedStringArray("4.4", "Forward Plus")
 config/icon="res://icon.svg"
+
+[dotnet]
+
+project/assembly_name="node_editor_plugin"
 
 [editor_plugins]
 
-enabled=PackedStringArray("res://addons/plugin_launcher/plugin.cfg", "res://addons/plugintools/plugin.cfg")
+enabled=PackedStringArray("res://addons/plugin_launcher/plugin.cfg")

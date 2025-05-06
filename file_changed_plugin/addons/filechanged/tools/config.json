@@ -1,0 +1,53 @@
+{
+	"database":{
+		"path":"file_snapshots.db"
+	},
+	"filters": {
+		"exclude_patterns": [
+			"**/addons/**",
+			"*.log",
+			"*.tmp",
+			"*cache*",
+			"**/node_modules/**",
+			"**/__pycache__/**",
+			"**/.git/**",
+			"*.pyc",
+			"*.pyo",
+			"*.so",
+			"*.o",
+			"*.a",
+			"*.dll",
+			"*.exe"
+		],
+		"include_patterns": [],
+		"exclude_extensions": [
+			".bak",
+			".swp",
+			".swo",
+			".class",
+			".DS_Store"
+		],
+		"exclude_directories": [
+			".godot",
+			".vscode",
+			".idea",
+			".vs",
+			"bin",
+			"obj",
+			"dist",
+			"build"
+		],
+		"max_file_size_mb": 10
+	},
+	"retention": {
+		"days": 30,
+		"max_per_file": 100,
+		"auto_threshold": 1000,
+		"merge_time_window": 300
+	},
+	"optimization": {
+		"compression_level": 9,
+		"base_snapshot_interval": 10,
+		"auto_vacuum": true
+	}
+}
